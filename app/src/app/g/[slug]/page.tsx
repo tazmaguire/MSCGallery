@@ -1,12 +1,32 @@
 import { q } from "@/lib/db"; import { downloadFilename, firstName } from "@/lib/naming";
 import Gallery from "@/components/Gallery"; import { notFound } from "next/navigation";
 import { googleFontsHref, fontStack } from "@/lib/fonts";
+import { siteConfig } from "@/lib/siteConfig";
+import { cookies } from "next/headers";
+import { checkGalleryAccess } from "@/lib/security";
+import GalleryPasswordGate from "@/components/GalleryPasswordGate";
 export const dynamic = "force-dynamic";
 export default async function P({ params }: { params: { slug: string } }) {
   const [g] = await q(`SELECT * FROM galleries WHERE slug=$1 AND is_published`, [params.slug]); if (!g) notFound();
+  const site = siteConfig();
+  if (g.view_password_hash && !checkGalleryAccess(cookies().get(`gv_${g.id}`)?.value, g.id))
+    return <GalleryPasswordGate slug={g.slug} galleryName={g.name} siteName={site.name} />;
   const albums = await q(
     `SELECT al.id, al.name, al.slug, (SELECT count(*) FROM assets a WHERE a.album_id=al.id AND a.visibility='visible' AND a.status='ready') AS count
      FROM albums al WHERE al.gallery_id=$1 AND al.is_private=false ORDER BY al.sort_order`, [g.id]);
+
+  // Custom covers (db/002_customisation.sql) — best-effort: an older DB that
+  // hasn't had the migration applied yet just falls back to no custom cover.
+  const albumCoverThumb: Record<string, string> = {};
+  let galleryCoverThumb: string | null = null;
+  try {
+    const covRows = await q(`SELECT al.id, cov.thumb_key FROM albums al JOIN assets cov ON cov.id = al.cover_asset_id WHERE al.gallery_id=$1`, [g.id]);
+    for (const r of covRows) if (r.thumb_key) albumCoverThumb[r.id] = r.thumb_key;
+  } catch {}
+  try {
+    const [gc] = await q(`SELECT COALESCE(cov.preview_key, cov.poster_key, cov.thumb_key) AS k FROM galleries gal JOIN assets cov ON cov.id = gal.cover_asset_id WHERE gal.id=$1`, [g.id]);
+    galleryCoverThumb = gc?.k || null;
+  } catch {}
   const withPhotos = albums.filter((a: any) => Number(a.count) > 0);
   const rows = await q(
     `SELECT a.id, a.kind, a.width, a.height, a.taken_at, a.public_key, a.album_id, a.thumb_key, a.preview_key, a.poster_key, a.contributor_id,
@@ -25,7 +45,10 @@ export default async function P({ params }: { params: { slug: string } }) {
     (assetsByAlbum[r.album_id] ||= []).push(a);
     const c = cc.get(r.contributor_id) ?? { id: r.contributor_id, name: r.first_name || firstName(r.contributor_name), count: 0 }; c.count++; cc.set(r.contributor_id, c);
   }
-  const albumsOut = withPhotos.map((al: any) => ({ id: al.id, name: al.name, slug: al.slug, count: Number(al.count), cover: assetsByAlbum[al.id]?.[0]?.thumb || null }));
+  const albumsOut = withPhotos.map((al: any) => ({
+    id: al.id, name: al.name, slug: al.slug, count: Number(al.count),
+    cover: (albumCoverThumb[al.id] && `/thumbs/thumb/${albumCoverThumb[al.id]}`) || assetsByAlbum[al.id]?.[0]?.thumb || null,
+  }));
   const fonts = { display: g.brand?.fontDisplay, body: g.brand?.fontBody, mono: g.brand?.fontMono };
   const fontHref = googleFontsHref(fonts);
   const fontVars: any = {};
@@ -39,7 +62,9 @@ export default async function P({ params }: { params: { slug: string } }) {
     eventDate={g.event_date ? new Date(g.event_date).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : ""}
     location={g.location || ""} intro={g.brand?.intro} albums={albumsOut} assetsByAlbum={assetsByAlbum}
     contributors={[...cc.values()].sort((a, b) => b.count - a.count)}
-    brand={{ primary: g.brand?.primary || "#E8442A", accent: g.brand?.accent || "#D6E04B", logo: g.brand?.logo_key }} />
+    brand={{ primary: g.brand?.primary || "#E8442A", accent: g.brand?.accent || "#D6E04B", logo: g.brand?.logo_key }}
+    coverUrl={galleryCoverThumb ? `/thumbs/preview/${galleryCoverThumb}` : null}
+    siteName={site.name} siteLogoUrl={site.logoUrl} />
     </div>
   </>;
 }

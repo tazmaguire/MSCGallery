@@ -98,25 +98,49 @@ app/                     Next.js 14 (App Router, TypeScript)
     filetype.ts          magic-byte allow-list (worker rejects impostors)
     naming.ts            storedFilename = Firstname-… ; downloadFilename = MSC2026_…
     fonts.ts             curated Google Fonts lists + href builder (per-gallery)
+    siteConfig.ts        app-wide white-label identity (SITE_* env vars, lazy)
   src/app/
-    g/[slug]/            public gallery (page) + download/ (streaming zip)
-    d/[id]/              download redirect → presigned R2 URL (free egress)
+    g/[slug]/            public gallery (page, password-gated if set) + download/
+                         (streaming zip, also password-gated + cart-selection aware)
+    d/[id]/              download redirect → presigned R2 URL (free egress, also
+                         password-gated)
     u/[token]/           guest upload page (open / pin modes)
-    admin/               list, gallery manager, moderation queue, login
-    api/                 upload/presign (THE security boundary), admin/*, auth
-  src/components/        Gallery, Uploader, ModerationQueue, GalleryManager,
-                         ThemeToggle, AdminNav, GalleryList
+    admin/               list, gallery manager, moderation queue, login,
+                         account (self-service), users (owner-only)
+    api/                 upload/presign (THE security boundary), admin/*, auth,
+                         gallery/unlock (gallery password check)
+  src/components/        Gallery (+ cart, breadcrumb), Uploader (stage → submit),
+                         ModerationQueue, GalleryManager (+ delete/edit/cover),
+                         ThemeToggle, AdminNav, GalleryList, SiteHeader,
+                         GalleryPasswordGate, AccountForm, UsersManager
   src/middleware.ts      security headers (CSP scoped to self + R2)
   src/instrumentation.ts runs validateConfig() at boot
 worker/                  derive (sharp/ffmpeg/exiftool) + purge; reads/writes R2
 db/001_schema.sql        11 tables. gallery→album→asset; 3 link modes; security tables
+db/002_customisation.sql gallery cover_asset_id + view_password_hash — NOT auto-applied
+                         to an existing DB, see "Database migrations" below
 deploy/
   docker-compose.yml     db + app(:8090) + worker. No Caddy.
   env.example            copy to .env, fill in
   nginx/gallery.conf     the host nginx site (reference copy)
-  db/                    schema copy auto-loaded by Postgres on first boot
+  db/                    schema copy auto-loaded by Postgres on first boot ONLY —
+                         irrelevant for migrations against a live DB, see below
 INSTALL-PORTAINER-IONOS.md   original install walkthrough
 ```
+
+---
+
+## Database migrations
+
+There is no migration framework. `db/00N_*.sql` files under `docker-entrypoint-initdb.d`
+(mirrored in `deploy/db/`) only run once, on a brand-new empty Postgres volume
+— they do nothing on a database that already has data. Every file after
+`001_schema.sql` has to be applied to the live DB by hand, once, after
+deploying the code that depends on it:
+```
+docker compose exec -T db psql -U gallery -d gallery < db/002_customisation.sql
+```
+Each migration is written with `IF NOT EXISTS` guards so re-running it is safe.
 
 ---
 
@@ -165,18 +189,20 @@ docker compose logs worker --tail 50
 
 ## Highest-value next tasks (suggested order)
 
-1. **Initialise Git + private remote, push, then set up `git pull`-based deploys
-   on the server.** This removes the file-copying that caused most setup pain.
-2. **A one-command deploy/update script** (`git pull && docker compose build app
-   && docker compose up -d`) with a `--no-cache` flag.
-3. **A tiny `public/.gitkeep`** so the Docker `COPY public` step can't fail on a
-   clean checkout. (Confirm `app/public/` exists in the repo.)
+1. ~~Initialise Git + `git pull`-based deploys~~ — done, this repo.
+2. ~~One-command deploy/update script~~ — done, `deploy/update.sh`.
+3. ~~`public/.gitkeep`~~ — present.
 4. **Replace the placeholder admin account**; consider an audit-log viewer page
    (the `audit_log` table is populated but unsurfaced).
-5. **Per-photo delete in admin** (soft-delete → worker purge job already exists in
-   the schema/worker; needs an admin control wired to it).
+5. ~~Per-photo delete in admin~~ — done: select photos in the gallery manager →
+   Delete (owner-only). Sets `deletion_status='pending'` (hides immediately) and
+   enqueues the existing worker `purge` job.
 6. **Backups**: Postgres (`pg_dump`) + the `deploy/data/thumbs` dir. R2 holds the
    originals/deliverables already. Nothing is backed up yet.
+7. **Apply `db/002_customisation.sql`** to the live DB (see "Database
+   migrations" above) to turn on gallery cover photos and whole-gallery
+   password protection — the code for both shipped already but degrades to
+   "feature off" until the columns exist.
 
 ---
 

@@ -13,6 +13,7 @@ export function siteConfig() {
     name: process.env.SITE_NAME?.trim() || "Gallery",
     tagline: process.env.SITE_TAGLINE?.trim() || "Event galleries",
     logoUrl: process.env.SITE_LOGO_URL?.trim() || null,
+    faviconUrl: process.env.SITE_FAVICON_URL?.trim() || process.env.SITE_LOGO_URL?.trim() || null,
     primary: process.env.SITE_PRIMARY_COLOR?.trim() || "#E8442A",
     accent: process.env.SITE_ACCENT_COLOR?.trim() || "#C6B400",
   };

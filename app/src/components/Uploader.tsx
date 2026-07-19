@@ -5,15 +5,16 @@
  * licence text comes from the gallery config. PIN links show a gate first.
  */
 import { useState, useRef, useCallback } from "react";
-import { Upload, Check, AlertCircle, Loader2, Lock, ShieldCheck } from "lucide-react";
+import { Upload, Check, AlertCircle, Loader2, Lock, ShieldCheck, X } from "lucide-react";
 
-type Job = { id: string; file: File; progress: number; status: "queued" | "uploading" | "done" | "error"; error?: string };
+type Job = { id: string; file: File; progress: number; status: "staged" | "queued" | "uploading" | "done" | "error"; error?: string };
 const PARALLEL = 4;
 
 export default function Uploader({ token, mode, galleryName, terms, brand }: {
   token: string; mode: "open" | "pin"; galleryName: string; terms: string; brand: { primary: string; accent: string };
 }) {
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [submitted, setSubmitted] = useState(false);
   const [name, setName] = useState(""); const [email, setEmail] = useState("");
   const [pin, setPin] = useState(""); const [pinOk, setPinOk] = useState(mode === "open");
   const [agreed, setAgreed] = useState(false);
@@ -48,13 +49,24 @@ export default function Uploader({ token, mode, galleryName, terms, brand }: {
     } catch (e: any) { patch(job.id, { status: "error", error: e.message }); }
   }, [token, name, email, pin, agreed]);
 
+  // Files are staged for review first — nothing uploads until Submit.
   const add = useCallback((files: FileList | File[]) => {
-    if (!name.trim() || !agreed) return;
-    const next: Job[] = Array.from(files).map((file) => ({ id: crypto.randomUUID(), file, progress: 0, status: "queued" }));
+    if (!name.trim() || !agreed || submitted) return;
+    const next: Job[] = Array.from(files).map((file) => ({ id: crypto.randomUUID(), file, progress: 0, status: "staged" }));
     setJobs((j) => [...j, ...next]);
-    (async () => { const queue = [...next]; await Promise.all(Array.from({ length: 2 }, async () => { for (;;) { const j = queue.shift(); if (!j) return; await uploadOne(j); } })); })();
-  }, [name, agreed, uploadOne]);
+  }, [name, agreed, submitted]);
 
+  const removeStaged = useCallback((id: string) => setJobs((js) => js.filter((j) => j.id !== id)), []);
+  const cancelAll = useCallback(() => setJobs([]), []);
+
+  const submit = useCallback(() => {
+    setSubmitted(true);
+    const staged = jobs.filter((j) => j.status === "staged");
+    const queue = [...staged];
+    Promise.all(Array.from({ length: 2 }, async () => { for (;;) { const j = queue.shift(); if (!j) return; await uploadOne(j); } }));
+  }, [jobs, uploadOne]);
+
+  const staged = jobs.filter((j) => j.status === "staged");
   const done = jobs.filter((j) => j.status === "done").length;
   const ready = name.trim() && agreed;
 
@@ -102,38 +114,48 @@ export default function Uploader({ token, mode, galleryName, terms, brand }: {
         </span>
       </label>
 
-      <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setDragging(false); add(e.dataTransfer.files); }}
-        onClick={() => ready && inputRef.current?.click()}
-        className={`cursor-pointer rounded-[var(--radius)] border-2 border-dashed p-10 text-center transition ${!ready ? "cursor-not-allowed border-[var(--border)] opacity-40" : dragging ? "border-[var(--accent)] bg-white/5" : "border-[var(--border)] hover:border-[var(--text-3)]"}`}>
-        <Upload size={28} className="mx-auto mb-3 text-[var(--text-2)]" />
-        <p className="text-sm font-medium">{!name.trim() ? "Enter your name first" : !agreed ? "Agree to the terms to continue" : "Tap to choose, or drop photos here"}</p>
-        <p className="data mt-1 text-[var(--text-3)]">Photos and video from your camera roll</p>
-        <input ref={inputRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={(e) => e.target.files && add(e.target.files)} />
-      </div>
+      {!submitted && (
+        <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
+          onDrop={(e) => { e.preventDefault(); setDragging(false); add(e.dataTransfer.files); }}
+          onClick={() => ready && inputRef.current?.click()}
+          className={`cursor-pointer rounded-[var(--radius)] border-2 border-dashed p-10 text-center transition ${!ready ? "cursor-not-allowed border-[var(--border)] opacity-40" : dragging ? "border-[var(--accent)] bg-white/5" : "border-[var(--border)] hover:border-[var(--text-3)]"}`}>
+          <Upload size={28} className="mx-auto mb-3 text-[var(--text-2)]" />
+          <p className="text-sm font-medium">{!name.trim() ? "Enter your name first" : !agreed ? "Agree to the terms to continue" : staged.length ? "Add more photos" : "Tap to choose, or drop photos here"}</p>
+          <p className="data mt-1 text-[var(--text-3)]">Photos and video from your camera roll</p>
+          <input ref={inputRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={(e) => e.target.files && add(e.target.files)} />
+        </div>
+      )}
 
       {jobs.length > 0 && (
         <div className="mt-6 space-y-2">
-          <div className="data text-[var(--text-2)]">{done} of {jobs.length} uploaded</div>
+          <div className="data text-[var(--text-2)]">{submitted ? `${done} of ${jobs.length} uploaded` : `${jobs.length} ready to send`}</div>
           {jobs.map((j) => (
             <div key={j.id} className="card flex items-center gap-3 px-3 py-2.5">
               <div className="shrink-0">
                 {j.status === "done" && <Check size={16} className="text-emerald-400" />}
                 {j.status === "error" && <AlertCircle size={16} className="text-[var(--brand)]" />}
                 {j.status === "uploading" && <Loader2 size={16} className="animate-spin text-[var(--text-2)]" />}
-                {j.status === "queued" && <div className="h-4 w-4 rounded-full bg-white/10" />}
+                {(j.status === "queued" || j.status === "staged") && <div className="h-4 w-4 rounded-full bg-white/10" />}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm">{j.file.name}</div>
                 {j.status === "uploading" && <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10"><div className="h-full transition-all" style={{ width: `${j.progress}%`, background: "var(--brand)" }} /></div>}
                 {j.error && <div className="data mt-1 text-[var(--brand)]">{j.error}</div>}
               </div>
+              {!submitted && j.status === "staged" && <button onClick={() => removeStaged(j.id)} className="shrink-0 text-[var(--text-3)] transition hover:text-[var(--brand)]" title="Remove"><X size={16} /></button>}
             </div>
           ))}
         </div>
       )}
 
-      {done > 0 && done === jobs.length && (
+      {!submitted && staged.length > 0 && (
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <button onClick={cancelAll} className="btn-ghost py-3 font-medium">Cancel</button>
+          <button onClick={submit} className="btn-primary py-3 font-medium">Submit {staged.length} {staged.length === 1 ? "photo" : "photos"}</button>
+        </div>
+      )}
+
+      {submitted && done > 0 && done === jobs.length && (
         <div className="mt-6 rounded-[var(--radius)] border border-emerald-500/20 bg-emerald-500/5 p-4">
           <p className="text-sm font-medium text-emerald-300">Thank you — they're with us.</p>
           <p className="data mt-1 text-[var(--text-2)]">Your {done === 1 ? "photo is" : "photos are"} in the queue for moderation. Once approved, they'll appear on the gallery.</p>

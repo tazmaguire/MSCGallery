@@ -4,7 +4,11 @@ import { siteConfig } from "@/lib/siteConfig";
 
 export async function generateMetadata() {
   const site = siteConfig();
-  return { title: site.name, description: site.tagline };
+  return {
+    title: site.name,
+    description: site.tagline,
+    icons: site.faviconUrl ? { icon: site.faviconUrl, shortcut: site.faviconUrl } : undefined,
+  };
 }
 
 // Default fonts loaded app-wide (galleries can override with their own).

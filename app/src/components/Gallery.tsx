@@ -7,14 +7,16 @@
 import { useState, useMemo, useEffect } from "react";
 import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
+import SiteHeader from "@/components/SiteHeader";
 
 type Asset = { id: string; kind: "photo" | "video"; width: number; height: number; contributor_id: string; firstName: string; download_filename: string; download_url: string; thumb: string; preview: string };
 type Album = { id: string; name: string; slug: string; cover: string | null; count: number };
 
-export default function Gallery({ gallerySlug, galleryName, eventDate, location, intro, albums, assetsByAlbum, contributors, brand }: {
+export default function Gallery({ gallerySlug, galleryName, eventDate, location, intro, albums, assetsByAlbum, contributors, brand, siteName, siteLogoUrl, coverUrl }: {
   gallerySlug: string; galleryName: string; eventDate: string; location: string; intro?: string;
   albums: Album[]; assetsByAlbum: Record<string, Asset[]>; contributors: { id: string; name: string; count: number }[];
   brand: { primary: string; accent: string; logo?: string };
+  siteName: string; siteLogoUrl: string | null; coverUrl?: string | null;
 }) {
   const single = albums.length === 1;
   const [openAlbum, setOpenAlbum] = useState<string | null>(single ? albums[0]?.id : null);
@@ -60,14 +62,23 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
   const dl = (url: string, name: string) => { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); };
   const totalPhotos = Object.values(assetsByAlbum).reduce((n, a) => n + a.length, 0);
 
+  const crumbs = !single && album
+    ? [{ label: "Home", href: "/" }, { label: galleryName, href: `/g/${gallerySlug}` }, { label: album.name }]
+    : [{ label: "Home", href: "/" }, { label: galleryName }];
+
   return (
     <div className="min-h-screen" style={style}>
+      <SiteHeader siteName={siteName} logoUrl={siteLogoUrl} crumbs={crumbs} />
       {!album && (
         <header className="relative overflow-hidden border-b border-[var(--border)]">
+          {coverUrl && <>
+            <img src={coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+            <div className="absolute inset-0 bg-gradient-to-t from-[var(--bg)] via-[var(--bg)]/70 to-[var(--bg)]/20" />
+          </>}
           <div className="absolute right-6 top-6 flex items-center gap-3">{brand.logo && <img src={brand.logo} alt="" className="h-12 w-auto opacity-90" />}<ThemeToggle /></div>
-          <div className="mx-auto max-w-7xl px-6 pb-10 pt-16 sm:pt-24">
+          <div className="relative mx-auto max-w-7xl px-6 pb-10 pt-16 sm:pt-24">
             <div className="eyebrow mb-4">{location}{location && eventDate && " · "}{eventDate}</div>
-            <h1 className="display text-5xl sm:text-7xl lg:text-8xl">{galleryName}</h1>
+            <h1 className="display text-3xl sm:text-4xl lg:text-5xl">{galleryName}</h1>
             {intro && <p className="mt-6 max-w-xl text-[var(--text-2)]">{intro}</p>}
             <div className="data mt-6 flex gap-6 text-[var(--text-2)]">
               <span><span className="text-[var(--text)]">{totalPhotos}</span> photos</span>

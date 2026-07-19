@@ -19,6 +19,7 @@ import { NextRequest } from "next/server";
 import { q } from "@/lib/db";
 import { getObjectStream } from "@/lib/storage";
 import { downloadFilename } from "@/lib/naming";
+import { checkGalleryAccess } from "@/lib/security";
 import archiver from "archiver";
 import { PassThrough } from "node:stream";
 
@@ -35,6 +36,8 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
     [params.slug]
   );
   if (!gallery) return new Response("Not found", { status: 404 });
+  if (gallery.view_password_hash && !checkGalleryAccess(req.cookies.get(`gv_${gallery.id}`)?.value, gallery.id))
+    return new Response("Locked", { status: 403 });
 
   // Gather what to include. Public downloads only ever see visible assets in
   // non-private albums — the query is the security boundary.

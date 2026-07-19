@@ -3,6 +3,7 @@ import { q } from "@/lib/db";
 import { getUser } from "@/lib/auth";
 import { audit, clientIp, hashIp } from "@/lib/security";
 import crypto from "node:crypto";
+import bcrypt from "bcryptjs";
 
 const DEFAULT_TERMS =
   "You keep copyright of any photo or video you upload. By uploading, you grant Memorial Stair Climb an irrevocable, royalty-free, non-exclusive licence to use, reproduce, and share your images for promotional, advertising, fundraising, and archival purposes. You confirm the content is yours to share and that you're happy for it to appear in the event gallery.";
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
   const { id, brand, upload_terms, is_published, allow_uploads, name, location,
-          max_files_per_session, max_session_bytes, max_file_bytes } = await req.json();
+          max_files_per_session, max_session_bytes, max_file_bytes, cover_asset_id, view_password } = await req.json();
   if (brand !== undefined) await q(`UPDATE galleries SET brand=$2 WHERE id=$1`, [id, JSON.stringify(brand)]);
   if (upload_terms !== undefined) await q(`UPDATE galleries SET upload_terms=$2 WHERE id=$1`, [id, upload_terms]);
   if (is_published !== undefined) await q(`UPDATE galleries SET is_published=$2 WHERE id=$1`, [id, is_published]);
@@ -49,5 +50,12 @@ export async function PATCH(req: NextRequest) {
   if (max_files_per_session) await q(`UPDATE galleries SET max_files_per_session=$2 WHERE id=$1`, [id, max_files_per_session]);
   if (max_session_bytes) await q(`UPDATE galleries SET max_session_bytes=$2 WHERE id=$1`, [id, max_session_bytes]);
   if (max_file_bytes) await q(`UPDATE galleries SET max_file_bytes=$2 WHERE id=$1`, [id, max_file_bytes]);
+  if (cover_asset_id !== undefined) await q(`UPDATE galleries SET cover_asset_id=$2 WHERE id=$1`, [id, cover_asset_id]);
+  // view_password: "" clears protection, a non-empty string sets a new password, omitted = unchanged.
+  if (view_password !== undefined) {
+    const hash = view_password.trim() ? await bcrypt.hash(view_password.trim(), 12) : null;
+    await q(`UPDATE galleries SET view_password_hash=$2 WHERE id=$1`, [id, hash]);
+    await audit(user.id, hash ? "set_gallery_password" : "clear_gallery_password", { id }, hashIp(clientIp(req)));
+  }
   return NextResponse.json({ ok: true });
 }

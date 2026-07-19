@@ -21,8 +21,9 @@ export async function POST(req: NextRequest) {
 }
 export async function PATCH(req: NextRequest) {
   const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
-  const { id, is_private, name } = await req.json();
+  const { id, is_private, name, cover_asset_id } = await req.json();
   if (is_private !== undefined) await q(`UPDATE albums SET is_private=$2 WHERE id=$1 AND is_guest_album=false`, [id, is_private]);
   if (name) await q(`UPDATE albums SET name=$2 WHERE id=$1`, [id, name]);
+  if (cover_asset_id !== undefined) await q(`UPDATE albums SET cover_asset_id=$2 WHERE id=$1`, [id, cover_asset_id]);
   return NextResponse.json({ ok: true });
 }

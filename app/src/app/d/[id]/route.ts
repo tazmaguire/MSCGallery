@@ -10,13 +10,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { q } from "@/lib/db";
 import { presignDownload } from "@/lib/storage";
 import { downloadFilename, firstName } from "@/lib/naming";
+import { checkGalleryAccess } from "@/lib/security";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const [a] = await q(
-    `SELECT a.public_key, a.kind, a.gallery_id,
-            g.short_code, g.location,
+    `SELECT a.public_key, a.kind, a.gallery_id, g.*,
             COALESCE(c.credit_line, c.display_name) AS contributor,
             al.is_private,
             row_number() OVER (PARTITION BY a.album_id ORDER BY a.taken_at, a.created_at) AS seq
@@ -30,6 +30,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     [params.id]
   );
   if (!a) return new Response("Not found", { status: 404 });
+  if (a.view_password_hash && !checkGalleryAccess(req.cookies.get(`gv_${a.gallery_id}`)?.value, a.gallery_id))
+    return new Response("Locked", { status: 403 });
 
   const ext = a.kind === "video" ? "mp4" : "jpg";
   const name = downloadFilename({ shortCode: a.short_code, location: a.location, contributor: a.contributor, seq: Number(a.seq), ext });

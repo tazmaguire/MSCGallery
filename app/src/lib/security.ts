@@ -29,6 +29,19 @@ export function safeEqual(a: string, b: string): boolean {
 }
 
 /**
+ * Whole-gallery password gate. Unlocking sets a cookie (`gv_<galleryId>`)
+ * holding an HMAC of the gallery id — proves "this browser passed the
+ * password check" without a session table. Checked by the gallery page, the
+ * zip download route, and the single-photo download redirect alike.
+ */
+export function galleryAccessToken(galleryId: string): string {
+  return crypto.createHmac("sha256", process.env.AUTH_SECRET!).update(`gallery-view:${galleryId}`).digest("hex");
+}
+export function checkGalleryAccess(cookieValue: string | undefined | null, galleryId: string): boolean {
+  return !!cookieValue && safeEqual(cookieValue, galleryAccessToken(galleryId));
+}
+
+/**
  * Token-bucket rate limit. `rate` tokens/sec, `burst` max. Returns true if
  * allowed. One row per bucket key; refilled lazily on each check.
  */

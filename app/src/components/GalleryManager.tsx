@@ -1,14 +1,14 @@
 "use client";
-/** Admin gallery manager: albums, add pro photos, three link modes + QR, move, branding. */
+/** Admin gallery manager: albums, add pro photos, three link modes + QR, move, edit, delete, branding. */
 import { useState, useEffect, useCallback, useRef } from "react";
-import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type } from "lucide-react";
+import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star } from "lucide-react";
 import { DISPLAY_FONTS, BODY_FONTS, MONO_FONTS } from "@/lib/fonts";
 
 export default function GalleryManager({ gallery, isOwner }: { gallery: any; isOwner: boolean }) {
   const [albums, setAlbums] = useState<any[]>([]); const [active, setActive] = useState<string | null>(null);
   const [assets, setAssets] = useState<any[]>([]); const [sel, setSel] = useState<Set<string>>(new Set());
   const [links, setLinks] = useState<any[]>([]);
-  const [panel, setPanel] = useState<null | "links" | "newAlbum" | "brand" | "qr">(null);
+  const [panel, setPanel] = useState<null | "links" | "newAlbum" | "brand" | "qr" | "editCredit" | "access">(null);
   const [qrToken, setQrToken] = useState<string>("");
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -33,6 +33,15 @@ export default function GalleryManager({ gallery, isOwner }: { gallery: any; isO
     setUploading(false); setTimeout(loadAssets, 1500);
   };
   const move = async (albumId: string) => { await fetch("/api/admin/assets", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds: [...sel], albumId }) }); setSel(new Set()); loadAssets(); };
+  const remove = async () => {
+    if (!confirm(`Delete ${sel.size} ${sel.size === 1 ? "photo" : "photos"}? This can't be undone.`)) return;
+    await fetch("/api/admin/assets", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds: [...sel] }) });
+    setSel(new Set()); loadAssets();
+  };
+  const setCover = async (assetId: string, kind: "gallery" | "album") => {
+    if (kind === "gallery") await fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: gallery.id, cover_asset_id: assetId }) });
+    else await fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: active, cover_asset_id: assetId }) });
+  };
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6" style={style}>
@@ -41,6 +50,7 @@ export default function GalleryManager({ gallery, isOwner }: { gallery: any; isO
         <div className="flex flex-wrap gap-2">
           <button onClick={() => setPanel("links")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Link2 size={15} />Upload links</button>
           <button onClick={() => setPanel("brand")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Palette size={15} />Branding</button>
+          <button onClick={() => setPanel("access")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm">{gallery.view_password_hash ? <Lock size={15} /> : <KeyRound size={15} />}Access</button>
           <a href={`/g/${gallery.slug}`} target="_blank" className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Eye size={15} />View</a>
         </div>
       </div>
@@ -78,11 +88,17 @@ export default function GalleryManager({ gallery, isOwner }: { gallery: any; isO
 
       {sel.size > 0 && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--border)] bg-[var(--bg)]/95 backdrop-blur">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3">
             <span className="text-sm"><strong>{sel.size}</strong> selected</span>
             <div className="flex flex-wrap items-center gap-2">
+              {sel.size === 1 && <>
+                <button onClick={() => setCover([...sel][0], "album")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs" title="Use as this album's cover"><Star size={12} />Album cover</button>
+                <button onClick={() => setCover([...sel][0], "gallery")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs" title="Use as this gallery's cover"><Star size={12} />Gallery cover</button>
+                <button onClick={() => setPanel("editCredit")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Pencil size={12} />Edit credit</button>
+              </>}
               <span className="data text-[var(--text-2)]">Move to</span>
               {albums.filter(al => al.id !== active).map(al => <button key={al.id} onClick={() => move(al.id)} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Move size={12} />{al.name}</button>)}
+              {isOwner && <button onClick={remove} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs text-[var(--brand)]"><Trash2 size={12} />Delete</button>}
             </div>
           </div>
         </div>
@@ -92,6 +108,8 @@ export default function GalleryManager({ gallery, isOwner }: { gallery: any; isO
       {panel === "qr" && <QRModal gallery={gallery} token={qrToken} onClose={() => setPanel("links")} />}
       {panel === "newAlbum" && <NewAlbumModal galleryId={gallery.id} onClose={() => setPanel(null)} onDone={() => { setPanel(null); loadAlbums(); }} />}
       {panel === "brand" && <BrandModal gallery={gallery} onClose={() => setPanel(null)} />}
+      {panel === "access" && <AccessModal gallery={gallery} onClose={() => setPanel(null)} />}
+      {panel === "editCredit" && <EditCreditModal current={assets.find(a => a.id === [...sel][0])} onClose={() => setPanel(null)} onDone={() => { setPanel(null); setSel(new Set()); loadAssets(); }} assetIds={[...sel]} />}
     </div>
   );
 }
@@ -154,6 +172,44 @@ function QRModal({ gallery, token, onClose }: any) {
       <div className="rounded-[var(--radius)] bg-white p-4"><img src={`/api/admin/galleries/${gallery.id}/qr?token=${token}`} alt="QR" className="w-full" /></div>
       <p className="data mt-3 break-all text-[var(--text-2)]">{site}/u/{token}</p>
       <a href={`/api/admin/galleries/${gallery.id}/qr?token=${token}`} download={`${gallery.slug}-qr.svg`} className="btn-ghost mt-3 inline-flex items-center gap-2 px-3 py-2 text-sm"><Download size={14} />Download SVG for print</a>
+    </Modal>
+  );
+}
+function AccessModal({ gallery, onClose }: any) {
+  const [protectedNow, setProtectedNow] = useState(!!gallery.view_password_hash);
+  const [password, setPassword] = useState(""); const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
+  const save = async () => {
+    setBusy(true); setErr("");
+    try {
+      // Unchecked -> clear. Checked + typed a password -> set it. Checked + left
+      // blank with a password already set -> omit the field, keep it as-is.
+      const body: any = { id: gallery.id };
+      if (!protectedNow) body.view_password = "";
+      else if (password) body.view_password = password;
+      const r = await fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      if (!r.ok) { setErr((await r.json().catch(() => ({}))).error || "Couldn't save. Has the db/002_customisation.sql migration been applied?"); return; }
+      onClose(); location.reload();
+    } finally { setBusy(false); }
+  };
+  return (
+    <Modal title="Access" onClose={onClose}>
+      <label className="mb-4 flex items-center gap-2 text-sm"><input type="checkbox" checked={protectedNow} onChange={e => setProtectedNow(e.target.checked)} className="h-4 w-4 accent-[var(--brand)]" />Password protect this gallery</label>
+      {protectedNow && <>
+        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder={gallery.view_password_hash ? "New password (leave blank to keep current)" : "Password"} className="mb-1.5 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
+        <p className="data mb-4 text-[var(--text-3)]">Visitors need this to view the gallery page, download the zip, or download individual photos.</p>
+      </>}
+      {err && <p className="data mb-3 text-[var(--brand)]">{err}</p>}
+      <button onClick={save} disabled={busy || (protectedNow && !gallery.view_password_hash && !password)} className="btn-primary w-full py-2.5 disabled:opacity-30">{busy ? "Saving…" : "Save"}</button>
+    </Modal>
+  );
+}
+function EditCreditModal({ current, assetIds, onClose, onDone }: any) {
+  const [name, setName] = useState(current?.contributor || "");
+  return (
+    <Modal title="Edit credit" onClose={onClose}>
+      <p className="data mb-3 text-[var(--text-3)]">Renames the credited contributor everywhere — including their other photos in this gallery.</p>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="Full name" className="mb-4 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
+      <button onClick={() => fetch("/api/admin/assets", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds, creditName: name }) }).then(onDone)} disabled={!name.trim()} className="btn-primary w-full py-2.5 disabled:opacity-30">Save</button>
     </Modal>
   );
 }

@@ -4,17 +4,20 @@ import type { NextRequest } from "next/server";
 export function middleware(req: NextRequest) {
   const res = NextResponse.next();
   const s3 = process.env.S3_ENDPOINT || "";
-  // If the operator points SITE_LOGO_URL at an external host, allow images from
-  // that origin too — otherwise a custom logo silently gets blocked by CSP.
-  let logoOrigin = "";
-  try { logoOrigin = process.env.SITE_LOGO_URL ? new URL(process.env.SITE_LOGO_URL).origin : ""; } catch {}
+  // If the operator points SITE_LOGO_URL/SITE_FAVICON_URL at an external host,
+  // allow images from those origins too — otherwise they're silently blocked by CSP.
+  const extraOrigins = new Set<string>();
+  for (const url of [process.env.SITE_LOGO_URL, process.env.SITE_FAVICON_URL]) {
+    try { if (url) extraOrigins.add(new URL(url).origin); } catch {}
+  }
+  const imgExtra = [...extraOrigins].join(" ");
   // Presigned download/redirect + video playback come from the R2 endpoint host.
   res.headers.set("Content-Security-Policy", [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
-    `img-src 'self' data: blob: ${s3} ${logoOrigin}`,
+    `img-src 'self' data: blob: ${s3} ${imgExtra}`,
     `media-src 'self' ${s3}`,
     `connect-src 'self' ${s3}`,
     "frame-ancestors 'none'", "base-uri 'self'", "form-action 'self'",

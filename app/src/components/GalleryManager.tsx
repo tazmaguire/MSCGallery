@@ -44,8 +44,6 @@ export default function GalleryManager({ gallery, isOwner }: { gallery: any; isO
           <a href={`/g/${gallery.slug}`} target="_blank" className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Eye size={15} />View</a>
         </div>
       </div>
-      <div className="turnout-stripe--thin mb-5 rounded" />
-
       <div className="mb-4 flex flex-wrap gap-2">
         {albums.map(al => (
           <button key={al.id} onClick={() => setActive(al.id)} className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${active === al.id ? "bg-[var(--text)] text-[var(--bg)]" : "border border-[var(--border)] text-[var(--text-2)]"}`}>

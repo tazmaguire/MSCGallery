@@ -1,12 +1,11 @@
 "use client";
 /**
- * Public gallery — the showpiece. Firefighter stair-climb aesthetic: warm
- * material darks, the turnout-gear reflective stripe signature, condensed
- * display type, race-timing mono for data. Photos are the hero. Two levels:
- * album covers → photos. Downloads at photo / album / gallery. "Shot by Sarah".
+ * Public gallery — the showpiece. Warm material darks, condensed display
+ * type, race-timing mono for data. Photos are the hero. Two levels: album
+ * covers → photos. Downloads at photo / album / gallery. "Shot by Sarah".
  */
 import { useState, useMemo, useEffect } from "react";
-import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft } from "lucide-react";
+import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 
 type Asset = { id: string; kind: "photo" | "video"; width: number; height: number; contributor_id: string; firstName: string; download_filename: string; download_url: string; thumb: string; preview: string };
@@ -22,6 +21,25 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
   const [filter, setFilter] = useState<string | null>(null);
   const [lb, setLb] = useState<{ album: string; i: number } | null>(null);
   const style = { ["--brand" as any]: brand.primary, ["--accent" as any]: brand.accent } as React.CSSProperties;
+
+  // Cart — pick individual photos across albums, download just those later.
+  // Lives in localStorage, scoped to this gallery, so it survives a refresh.
+  const cartKey = `cart:${gallerySlug}`;
+  const [cart, setCart] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try { setCart(new Set(JSON.parse(localStorage.getItem(cartKey) || "[]"))); } catch {}
+  }, [cartKey]);
+  const persistCart = (next: Set<string>) => {
+    setCart(next);
+    try { localStorage.setItem(cartKey, JSON.stringify([...next])); } catch {}
+  };
+  const toggleCart = (id: string) => {
+    const next = new Set(cart);
+    next.has(id) ? next.delete(id) : next.add(id);
+    persistCart(next);
+  };
+  const clearCart = () => persistCart(new Set());
+  const cartDownloadUrl = `/g/${gallerySlug}/download?${[...cart].map((id) => `id=${id}`).join("&")}`;
 
   const album = albums.find((a) => a.id === openAlbum) || null;
   const assets = openAlbum ? assetsByAlbum[openAlbum] || [] : [];
@@ -57,7 +75,6 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
               <span><span className="text-[var(--text)]">{contributors.length}</span> contributors</span>
             </div>
           </div>
-          <div className="turnout-stripe" />
         </header>
       )}
 
@@ -79,7 +96,6 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
               </div>
             )}
           </div>
-          <div className="turnout-stripe--thin" />
         </header>
       )}
 
@@ -110,9 +126,13 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
         {album && (
           <div className="columns-2 gap-3 sm:columns-3 lg:columns-4 [&>*]:mb-3">
             {shown.map((a) => (
-              <figure key={a.id} className="group relative break-inside-avoid overflow-hidden rounded-[var(--radius)] bg-[var(--surface)]">
+              <figure key={a.id} className={`group relative break-inside-avoid overflow-hidden rounded-[var(--radius)] bg-[var(--surface)] ${cart.has(a.id) ? "ring-2 ring-[var(--brand)]" : ""}`}>
                 <img src={a.thumb} alt="" loading="lazy" width={a.width} height={a.height} onClick={() => setLb({ album: album.id, i: assets.indexOf(a) })} className="w-full cursor-zoom-in transition duration-300 group-hover:opacity-95" />
                 {a.kind === "video" && <div className="pointer-events-none absolute inset-0 grid place-items-center"><div className="rounded-full bg-black/50 p-3 backdrop-blur"><Play size={18} fill="white" /></div></div>}
+                <button onClick={(e) => { e.stopPropagation(); toggleCart(a.id); }} title={cart.has(a.id) ? "Remove from cart" : "Add to cart"}
+                  className={`absolute left-2 top-2 grid h-8 w-8 place-items-center rounded-full backdrop-blur transition focus:opacity-100 ${cart.has(a.id) ? "bg-[var(--brand)] text-white opacity-100" : "bg-black/40 text-white/90 opacity-0 group-hover:opacity-100"}`}>
+                  {cart.has(a.id) ? <Check size={15} /> : <ShoppingCart size={15} />}
+                </button>
                 <button onClick={(e) => { e.stopPropagation(); dl(a.download_url, a.download_filename); }} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/40 text-white/90 opacity-0 backdrop-blur transition group-hover:opacity-100 focus:opacity-100" title="Download"><Download size={15} /></button>
                 <figcaption className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-3 pb-2 pt-8 opacity-0 transition group-hover:opacity-100"><span className="data text-white/90"><span className="text-[var(--text-2)]">SHOT BY</span> {a.firstName}</span></figcaption>
               </figure>
@@ -140,8 +160,23 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
                 <span className="data text-white/60">{current.width} × {current.height}</span>
               </div>
               <p className="data text-white/45">You're viewing a preview — download the full-size file below, it's free.</p>
-              <button onClick={() => dl(current.download_url, current.download_filename)} className="btn-primary flex w-full items-center justify-center gap-2 px-5 py-4 text-base"><Download size={18} /> Download full resolution — free</button>
+              <div className="flex gap-3">
+                <button onClick={() => toggleCart(current.id)} className={`flex shrink-0 items-center justify-center gap-2 rounded-[var(--radius)] px-4 py-4 text-base transition ${cart.has(current.id) ? "bg-[var(--brand)] text-white" : "border border-white/20 text-white/90 hover:bg-white/10"}`} title={cart.has(current.id) ? "Remove from cart" : "Add to cart"}>
+                  {cart.has(current.id) ? <Check size={18} /> : <ShoppingCart size={18} />}
+                </button>
+                <button onClick={() => dl(current.download_url, current.download_filename)} className="btn-primary flex flex-1 items-center justify-center gap-2 px-5 py-4 text-base"><Download size={18} /> Download full resolution — free</button>
+              </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {cart.size > 0 && (
+        <div className="fixed inset-x-4 bottom-4 z-40 mx-auto flex max-w-sm items-center justify-between gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-2xl">
+          <span className="flex items-center gap-2 text-sm font-medium"><ShoppingCart size={16} /> {cart.size} {cart.size === 1 ? "photo" : "photos"} selected</span>
+          <div className="flex items-center gap-2">
+            <button onClick={clearCart} className="grid h-8 w-8 place-items-center rounded-full text-[var(--text-2)] transition hover:text-[var(--brand)]" title="Clear cart"><Trash2 size={15} /></button>
+            <a href={cartDownloadUrl} className="btn-primary flex items-center gap-1.5 px-3 py-2 text-sm"><Download size={14} /> Download</a>
           </div>
         </div>
       )}

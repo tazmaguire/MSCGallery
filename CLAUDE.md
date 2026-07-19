@@ -1,4 +1,4 @@
-# Point Radius Gallery — notes for Claude Code
+# Gallery — notes for Claude Code
 
 **Read `HANDOFF.md` first.** It has the full picture; this is the quick reference.
 
@@ -17,6 +17,11 @@ an IONOS VPS shared with other services behind the host's nginx.
 - **`api/upload/presign` is the security boundary** — album/moderation/caps come
   from the link token server-side, never the client.
 - Storage is **R2** (S3 API). No Backblaze, no `B2_*`, no `PUBLIC_CDN_URL`.
+- The R2 bucket needs a **CORS policy** (`deploy/r2-cors.json`) or every guest
+  upload fails instantly — the browser blocks the direct-to-R2 PUT before it
+  leaves. Not something code can fix; it's set on the bucket in Cloudflare.
+- App-wide branding (name/logo/colours) is env-driven — `app/src/lib/siteConfig.ts`
+  — never hardcode a product name in a component again.
 
 ## Build / verify
 ```

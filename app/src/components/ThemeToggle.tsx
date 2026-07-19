@@ -16,8 +16,8 @@ export default function ThemeToggle() {
     const next = theme === "light" ? "dark" : "light";
     setTheme(next);
     document.documentElement.setAttribute("data-theme", next);
-    document.cookie = `pr_theme=${next}; path=/; max-age=31536000; samesite=lax`;
-    try { localStorage.setItem("pr_theme", next); } catch {}
+    document.cookie = `gallery_theme=${next}; path=/; max-age=31536000; samesite=lax`;
+    try { localStorage.setItem("gallery_theme", next); } catch {}
   };
   return (
     <button onClick={flip} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}

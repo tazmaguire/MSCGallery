@@ -3,10 +3,9 @@
 @tailwind utilities;
 
 /*
-  Point Radius — design tokens, theme-aware.
+  Design tokens, theme-aware.
 
   Bootstrap-style, light by default, dark available via a global toggle.
-  The token NAMES are semantic (their firefighter origins are just history):
       --bg        page background
       --surface   cards, raised areas
       --surface-2 hover / recessed
@@ -14,8 +13,8 @@
       --text      primary text
       --text-2    secondary text
       --text-3    tertiary / muted
-      --brand     primary action colour (per-gallery configurable)
-      --accent    the turnout-stripe hi-vis (per-gallery configurable)
+      --brand     primary action colour (site-wide default, per-gallery configurable)
+      --accent    secondary accent colour (site-wide default, per-gallery configurable)
   Fonts are set per gallery via --font-display / --font-body / --font-mono.
 */
 
@@ -72,22 +71,6 @@ body {
 .display { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; line-height: 0.98; }
 .eyebrow { font-family: var(--font-mono); font-size: .6875rem; letter-spacing: .16em; text-transform: uppercase; color: var(--text-3); }
 .data    { font-family: var(--font-mono); font-size: .75rem; letter-spacing: .02em; }
-
-/* Signature stripe — reads on both themes */
-.turnout-stripe {
-  height: 10px;
-  background:
-    linear-gradient(var(--accent), var(--accent)) top / 100% 2px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) bottom / 100% 2px no-repeat,
-    repeating-linear-gradient(-45deg, var(--border-2) 0 8px, var(--surface-2) 8px 16px) center / 100% 6px no-repeat;
-}
-.turnout-stripe--thin {
-  height: 4px;
-  background:
-    linear-gradient(var(--accent), var(--accent)) top / 100% 1px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) bottom / 100% 1px no-repeat,
-    var(--surface-2);
-}
 
 *:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 

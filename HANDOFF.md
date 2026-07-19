@@ -1,4 +1,4 @@
-# Handoff — Point Radius Gallery
+# Handoff — Self-hosted Event Gallery
 
 This document briefs the next developer (working in Claude Code) to take over a
 **live, deployed** self-hosted event photo gallery. Read it fully before touching
@@ -207,3 +207,31 @@ docker compose logs worker --tail 50
 - The build must pass with **zero app env vars present** (that's the Docker build
   condition). If you add a new module that reads `process.env.X` at import time,
   you'll reintroduce the build crash — read env lazily inside functions instead.
+
+---
+
+## If uploads fail instantly ("Couldn't reach storage")
+
+The browser uploads straight to R2 via a presigned PUT (`Uploader.tsx` → `put()`).
+If that XHR fails with no response at all — not a 4xx/5xx, literally no response —
+it's almost always because **the R2 bucket has no CORS policy**, so the browser
+blocks the request itself before it leaves (a CORS preflight rejection looks
+identical to a dropped connection from JS). This bites hardest right after a
+storage migration (e.g. B2 → R2) because the CORS policy lives on the bucket, not
+in this repo, and a fresh bucket has none.
+
+Fix: apply `deploy/r2-cors.json` to the bucket. Easiest path, Cloudflare
+dashboard → R2 → your bucket → Settings → CORS Policy → paste the contents of
+that file (edit `AllowedOrigins` to match your actual domain first). Or via the
+S3-compatible API if you have `aws` configured with R2 credentials:
+```
+aws s3api put-bucket-cors --endpoint-url "$S3_ENDPOINT" \
+  --bucket "$S3_BUCKET" --cors-configuration file://deploy/r2-cors.json
+```
+Confirm it's set with `aws s3api get-bucket-cors --endpoint-url "$S3_ENDPOINT" --bucket "$S3_BUCKET"`.
+
+Until this is set, no guest upload can ever complete — which also means nothing
+ever reaches the moderation queue (queue requires `status='ready'`, which an
+asset only reaches after its bytes actually land in R2). If uploads still fail
+after CORS is confirmed correct, check `docker compose logs worker` next —
+processing failures also keep assets out of the queue (they never reach `ready`).

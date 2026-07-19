@@ -1,4 +1,4 @@
-# Point Radius Gallery — production compose (IONOS, behind host nginx).
+# Gallery — production compose (IONOS, behind host nginx).
 # The app publishes to 127.0.0.1:8090; the host's nginx reverse-proxies the
 # domain to it and terminates TLS. No Caddy (nginx already owns 80/443 on this
 # shared box, which also runs other sites).

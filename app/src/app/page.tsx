@@ -1,10 +1,12 @@
 import { q } from "@/lib/db"; import Link from "next/link"; import ThemeToggle from "@/components/ThemeToggle";
+import { siteConfig } from "@/lib/siteConfig";
 export const dynamic = "force-dynamic";
 export default async function Home() {
+  const site = siteConfig();
   const g = await q(`SELECT slug, name, event_date, location, brand FROM galleries WHERE is_published ORDER BY event_date DESC NULLS LAST`);
   return (
     <div>
-      <header className="border-b border-[var(--border)]"><div className="mx-auto max-w-4xl px-6 py-12"><div className="flex items-start justify-between"><div><div className="eyebrow mb-2">Point Radius</div><h1 className="display text-5xl">Galleries</h1></div><ThemeToggle /></div></div><div className="turnout-stripe" /></header>
+      <header className="border-b border-[var(--border)]"><div className="mx-auto max-w-4xl px-6 py-12"><div className="flex items-start justify-between"><div><div className="eyebrow mb-2">{site.name}</div><h1 className="display text-5xl">Galleries</h1></div><ThemeToggle /></div></div></header>
       <div className="mx-auto max-w-4xl px-6 py-8">
         <div className="space-y-2">
           {g.map((x: any) => (

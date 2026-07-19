@@ -28,6 +28,7 @@ export const maxDuration = 300; // long downloads are fine
 export async function GET(req: NextRequest, { params }: { params: { slug: string } }) {
   const url = new URL(req.url);
   const albumSlug = url.searchParams.get("album"); // optional; absent = whole gallery
+  const ids = url.searchParams.getAll("id"); // optional; a cart selection — overrides album
 
   const [gallery] = await q(
     `SELECT * FROM galleries WHERE slug=$1 AND is_published`,
@@ -52,13 +53,16 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
        AND a.deletion_status IS NULL
        AND al.is_private = false
        AND ($2::text IS NULL OR al.slug = $2)
+       AND ($3::uuid[] IS NULL OR a.id = ANY($3::uuid[]))
      ORDER BY al.sort_order, a.taken_at`,
-    [gallery.id, albumSlug]
+    [gallery.id, ids.length ? null : albumSlug, ids.length ? ids : null]
   );
 
   if (!rows.length) return new Response("Nothing to download", { status: 404 });
 
-  const zipName = albumSlug
+  const zipName = ids.length
+    ? `${gallery.short_code}_selected.zip`
+    : albumSlug
     ? `${gallery.short_code}_${albumSlug}.zip`
     : `${gallery.short_code}_all.zip`;
 
@@ -81,8 +85,9 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
         });
 
         // Put each album in its own folder inside the zip when grabbing the
-        // whole gallery. For a single album, flat is nicer.
-        const path = albumSlug ? name : `${r.album_slug}/${name}`;
+        // whole gallery or a cart selection that may span albums. For a single
+        // album, flat is nicer.
+        const path = albumSlug && !ids.length ? name : `${r.album_slug}/${name}`;
 
         const body = await getObjectStream(r.public_key);
         archive.append(body as any, { name: path });

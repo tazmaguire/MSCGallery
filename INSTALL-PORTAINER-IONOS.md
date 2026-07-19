@@ -1,4 +1,13 @@
-# Point Radius Gallery — Setup on IONOS with Portainer (step by step)
+# Setup on IONOS with Portainer (step by step)
+
+> **Superseded for the reverse-proxy step.** This guide deploys a dedicated
+> **Caddy** container to terminate TLS, which is right for a VPS with nothing
+> else on it. The current production deployment instead shares the VPS with
+> other sites behind the **host's own nginx** (no Caddy, app on
+> `127.0.0.1:8090`) — see `HANDOFF.md` for that topology. If your VPS is
+> dedicated to this app alone, Caddy as below is still a fine choice; if it's
+> shared, follow `HANDOFF.md` instead. Everything about R2, DNS, and Portainer
+> itself below is still accurate.
 
 This is written to be followed literally, top to bottom, no prior Docker
 experience assumed. Storage is **Cloudflare R2** (egress is free — no download
@@ -33,6 +42,11 @@ separate from DNS.
    - Click **Create bucket**.
 4. Leave the bucket **private** (the default). The app serves downloads with
    temporary signed links — the bucket never needs to be public.
+4.5. **Set the CORS policy** — without this, guest uploads fail instantly with
+   a network error, because the browser blocks the direct-to-R2 upload before
+   it even leaves. Bucket → **Settings** → **CORS Policy** → paste the
+   contents of `deploy/r2-cors.json` from this repo, editing `AllowedOrigins`
+   to your actual domain (e.g. `https://gallery.memorialstairclimb.com`) first.
 5. Now make an access key. R2 home → **Manage R2 API Tokens** (top-right) →
    **Create API token**.
    - Token name: `gallery-app`
@@ -252,7 +266,7 @@ then the padlock appears. Go to `/admin/login` and sign in.
 | `app` container restarting | its **Logs** show a CONFIG ERROR naming the bad setting |
 | Site won't load at the domain | DNS not spread yet (wait), or IONOS firewall missing 80/443 |
 | "Your connection isn't private" on first load | normal for ~60s while Caddy gets the cert; refresh |
-| Uploads fail instantly | R2 key lacks **Object Read & Write**, or wrong bucket name |
+| Uploads fail instantly | Bucket has no **CORS policy** (most common — see `deploy/r2-cors.json`), or the R2 key lacks **Object Read & Write**, or wrong bucket name |
 | Photo uploads but no thumbnail | `worker` **Logs** — usually a wrong R2 value |
 | Can't reach Portainer | you need `https://IP:9443` and to click through the cert warning |
 

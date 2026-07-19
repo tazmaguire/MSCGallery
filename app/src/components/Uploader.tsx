@@ -81,8 +81,6 @@ export default function Uploader({ token, mode, galleryName, terms, brand }: {
         <h1 className="display text-4xl">Share your photos</h1>
         <p className="mt-2 text-[var(--text-2)]">Send us what you shot on the day. We'll credit you, and they'll appear once we've had a quick look.</p>
       </header>
-      <div className="turnout-stripe--thin mb-6 rounded" />
-
       <div className="card mb-4 space-y-3 p-4">
         <div>
           <label className="mb-1.5 block text-sm font-medium">Your name <span className="text-[var(--brand)]">*</span></label>
@@ -138,7 +136,7 @@ export default function Uploader({ token, mode, galleryName, terms, brand }: {
       {done > 0 && done === jobs.length && (
         <div className="mt-6 rounded-[var(--radius)] border border-emerald-500/20 bg-emerald-500/5 p-4">
           <p className="text-sm font-medium text-emerald-300">Thank you — they're with us.</p>
-          <p className="data mt-1 text-[var(--text-2)]">We'll take a quick look and they'll appear on the gallery shortly.</p>
+          <p className="data mt-1 text-[var(--text-2)]">Your {done === 1 ? "photo is" : "photos are"} in the queue for moderation. Once approved, they'll appear on the gallery.</p>
         </div>
       )}
     </div>
@@ -149,7 +147,13 @@ function put(url: string, body: Blob, onP: (p: number) => void): Promise<string>
     const x = new XMLHttpRequest(); x.open("PUT", url);
     x.upload.onprogress = (e) => e.lengthComputable && onP(Math.round(e.loaded / e.total * 100));
     x.onload = () => x.status >= 200 && x.status < 300 ? res((x.getResponseHeader("ETag") || "").replace(/"/g, "")) : rej(new Error(`Upload failed (${x.status})`));
-    x.onerror = () => rej(new Error("Network error. On mobile data? Try wifi."));
+    x.onerror = () => {
+      // A request that never got a response almost always means the browser blocked
+      // it before it left (CORS preflight rejected by the storage bucket) rather than
+      // a flaky connection — log the technical detail for whoever's debugging it.
+      console.error(`Upload PUT to storage failed with no response (${url.split("?")[0]}). If this happens on every device/network, check the storage bucket's CORS policy allows PUT from this origin.`);
+      rej(new Error("Couldn't reach storage. Please try again — if it keeps happening, let the event organiser know."));
+    };
     x.send(body);
   });
 }

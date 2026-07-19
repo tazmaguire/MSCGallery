@@ -1,0 +1,9 @@
+[
+  {
+    "AllowedOrigins": ["https://gallery.memorialstairclimb.co.uk"],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]

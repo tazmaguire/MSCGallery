@@ -1,9 +1,16 @@
-# Point Radius Gallery — Install & Security Guide
+# Install & Security Guide
+
+> **Superseded for deploy mechanics.** This guide describes an earlier
+> standalone-VPS + Backblaze B2 + Caddy topology. The current production setup
+> is VPS + **Cloudflare R2** + **host nginx** (no Caddy, app on
+> `127.0.0.1:8090`) — see `HANDOFF.md` for the accurate architecture and
+> `CLAUDE.md` for the deploy loop (`./deploy/update.sh`). The security model,
+> upload modes, and "prove it" checklist below are still accurate; only the
+> storage backend and reverse-proxy details are stale.
 
 A self-hosted, Pixieset-class event gallery. Gallery-per-event, albums within,
 three upload modes, moderation, free full-resolution downloads, per-photographer
-credit, full branding control. Runs entirely on: VPS + Backblaze B2 + Cloudflare.
-Nothing at home.
+credit, full branding control.
 
 Legend: [MAC] your Mac · [WEB] browser · [VPS] the VPS
 
@@ -31,10 +38,10 @@ Hardened deliberately, not left at "reasonable":
 - Rate limiting (token-bucket, per hashed IP): uploads throttled; login capped at
   5/min; PIN attempts locked with growing backoff after 5 wrong tries.
 - File-type verification. The worker reads magic bytes and rejects anything that
-  isn't a genuine image/video; the impostor is deleted from B2.
+  isn't a genuine image/video; the impostor is deleted from storage.
 - Server-derived trust. Album, moderation state, and caps come from the link
   token, never the client. A guest editing the request still lands in the queue.
-- Security headers on every response: CSP locked to self + your CDN + B2,
+- Security headers on every response: CSP locked to self + your storage endpoint,
   frame-ancestors none, HSTS, nosniff, referrer policy.
 - Consent captured. Required checkbox records agreement to the licence before
   upload — active agreement, not just displayed text.
@@ -138,9 +145,8 @@ Sign in at /admin/login.
 | Symptom | Cause |
 |---|---|
 | App won't start, boxed CONFIG ERROR | a secret is missing/placeholder — message says which |
-| Uploads fail instantly | B2 CORS, or key lacks write |
-| Downloads bill you | grey cloud on media |
-| Photo uploads, no thumbnail | docker compose logs worker — B2 or app unreachable |
+| Uploads fail instantly ("Couldn't reach storage") | R2 bucket CORS policy missing — see `deploy/r2-cors.json` and `HANDOFF.md` |
+| Photo uploads, no thumbnail | `docker compose logs worker` — storage creds or app unreachable |
 | "too many attempts" on login | rate limit — wait a minute |
 
 ## Running an event
@@ -151,12 +157,12 @@ During: guest photos hit the queue. Clear on your phone — A approve, R reject.
 Pro/photographer photos appear live.
 After: sort guest photos into albums. Publish.
 Costs: an event's web-sized media is tens of GB. About £0–1/month. Delete a
-gallery when done and the purge clears B2 too.
+gallery when done and the purge clears R2 too.
 
 ## The rules that keep it cheap and safe
 
-1. media DNS record ORANGE -> free egress.
-2. Thumbnails on the VPS, never B2 -> no transaction bills.
-3. Downloads via PUBLIC_CDN_URL, never a backblazeb2.com URL.
+1. R2 egress is free, always -> downloads never bill you.
+2. Thumbnails on the VPS, never in R2 -> no extra storage/transaction cost.
+3. Downloads via short-lived presigned R2 URLs, never a public bucket URL.
 4. DB stores keys, never URLs -> storage swappable in config.
 5. Secrets real and 24+ chars -> enforced at boot.

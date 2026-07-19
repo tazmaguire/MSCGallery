@@ -1,4 +1,4 @@
--- Point Radius Gallery — schema
+-- Gallery — schema
 -- GALLERY (event) → ALBUM → ASSET, with three ways to contribute.
 --   LINK MODES (upload_links.mode):
 --     open         — scan & upload. Name required, email optional. Moderated. Standard caps.

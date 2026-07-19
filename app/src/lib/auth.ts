@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import bcrypt from "bcryptjs";
 import { q } from "./db";
 
-const COOKIE = "pr_session";
+const COOKIE = "gallery_session";
 const secret = () => new TextEncoder().encode(process.env.AUTH_SECRET!);
 export type SessionUser = { id: string; email: string; display_name: string; role: "owner" | "moderator" };
 

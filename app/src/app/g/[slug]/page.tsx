@@ -1,0 +1,45 @@
+import { q } from "@/lib/db"; import { downloadFilename, firstName } from "@/lib/naming";
+import Gallery from "@/components/Gallery"; import { notFound } from "next/navigation";
+import { googleFontsHref, fontStack } from "@/lib/fonts";
+export const dynamic = "force-dynamic";
+export default async function P({ params }: { params: { slug: string } }) {
+  const [g] = await q(`SELECT * FROM galleries WHERE slug=$1 AND is_published`, [params.slug]); if (!g) notFound();
+  const albums = await q(
+    `SELECT al.id, al.name, al.slug, (SELECT count(*) FROM assets a WHERE a.album_id=al.id AND a.visibility='visible' AND a.status='ready') AS count
+     FROM albums al WHERE al.gallery_id=$1 AND al.is_private=false ORDER BY al.sort_order`, [g.id]);
+  const withPhotos = albums.filter((a: any) => Number(a.count) > 0);
+  const rows = await q(
+    `SELECT a.id, a.kind, a.width, a.height, a.taken_at, a.public_key, a.album_id, a.thumb_key, a.preview_key, a.poster_key, a.contributor_id,
+            COALESCE(c.credit_line, c.display_name) AS contributor_name, c.first_name,
+            row_number() OVER (PARTITION BY a.album_id ORDER BY a.taken_at, a.created_at) AS seq
+     FROM assets a JOIN contributors c ON c.id=a.contributor_id JOIN albums al ON al.id=a.album_id
+     WHERE a.gallery_id=$1 AND a.visibility='visible' AND a.status='ready' AND al.is_private=false AND a.deletion_status IS NULL
+     ORDER BY a.taken_at DESC NULLS LAST, a.created_at DESC`, [g.id]);
+  const assetsByAlbum: Record<string, any[]> = {}; const cc = new Map<string, any>();
+  for (const r of rows) {
+    const ext = r.kind === "video" ? "mp4" : "jpg";
+    const fn = downloadFilename({ shortCode: g.short_code, location: g.location, contributor: r.contributor_name, seq: Number(r.seq), ext });
+    const a = { id: r.id, kind: r.kind, width: r.width, height: r.height, contributor_id: r.contributor_id,
+      firstName: r.first_name || firstName(r.contributor_name), download_filename: fn, download_url: `/d/${r.id}`,
+      thumb: `/thumbs/thumb/${r.thumb_key}`, preview: `/thumbs/preview/${r.preview_key || r.poster_key}` };
+    (assetsByAlbum[r.album_id] ||= []).push(a);
+    const c = cc.get(r.contributor_id) ?? { id: r.contributor_id, name: r.first_name || firstName(r.contributor_name), count: 0 }; c.count++; cc.set(r.contributor_id, c);
+  }
+  const albumsOut = withPhotos.map((al: any) => ({ id: al.id, name: al.name, slug: al.slug, count: Number(al.count), cover: assetsByAlbum[al.id]?.[0]?.thumb || null }));
+  const fonts = { display: g.brand?.fontDisplay, body: g.brand?.fontBody, mono: g.brand?.fontMono };
+  const fontHref = googleFontsHref(fonts);
+  const fontVars: any = {};
+  if (g.brand?.fontDisplay) fontVars["--font-display"] = fontStack(g.brand.fontDisplay, "system-ui, sans-serif");
+  if (g.brand?.fontBody) fontVars["--font-body"] = fontStack(g.brand.fontBody, "system-ui, sans-serif");
+  if (g.brand?.fontMono) fontVars["--font-mono"] = fontStack(g.brand.fontMono, "ui-monospace, monospace");
+  return <>
+    {fontHref && <link href={fontHref} rel="stylesheet" />}
+    <div style={fontVars}>
+    <Gallery gallerySlug={g.slug} galleryName={g.name}
+    eventDate={g.event_date ? new Date(g.event_date).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : ""}
+    location={g.location || ""} intro={g.brand?.intro} albums={albumsOut} assetsByAlbum={assetsByAlbum}
+    contributors={[...cc.values()].sort((a, b) => b.count - a.count)}
+    brand={{ primary: g.brand?.primary || "#E8442A", accent: g.brand?.accent || "#D6E04B", logo: g.brand?.logo_key }} />
+    </div>
+  </>;
+}

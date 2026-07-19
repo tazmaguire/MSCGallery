@@ -1,0 +1,19 @@
+# secrets & env
+deploy/.env
+*.env
+!deploy/env.example
+
+# runtime data (photos, thumbnails, db, certs)
+deploy/data/
+
+# node / next
+node_modules/
+.next/
+*.log
+
+# os junk
+.DS_Store
+Thumbs.db
+
+# packaged tarballs
+*.tar.gz

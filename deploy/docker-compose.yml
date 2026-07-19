@@ -1,0 +1,40 @@
+# Point Radius Gallery — production compose (IONOS, behind host nginx).
+# The app publishes to 127.0.0.1:8090; the host's nginx reverse-proxies the
+# domain to it and terminates TLS. No Caddy (nginx already owns 80/443 on this
+# shared box, which also runs other sites).
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gallery
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: gallery
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d:ro
+    command: postgres -c shared_buffers=512MB -c effective_cache_size=1GB -c max_connections=50
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gallery"]
+      interval: 10s
+      retries: 5
+  app:
+    build: ../app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    ports:
+      - "127.0.0.1:8090:3000"
+    volumes:
+      - ./data/thumbs:/app/public/thumbs
+  worker:
+    build: ../worker
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      SELF_URL: "http://app:3000"

@@ -1,0 +1,122 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Point Radius — design tokens, theme-aware.
+
+  Bootstrap-style, light by default, dark available via a global toggle.
+  The token NAMES are semantic (their firefighter origins are just history):
+      --bg        page background
+      --surface   cards, raised areas
+      --surface-2 hover / recessed
+      --border    hairline borders
+      --text      primary text
+      --text-2    secondary text
+      --text-3    tertiary / muted
+      --brand     primary action colour (per-gallery configurable)
+      --accent    the turnout-stripe hi-vis (per-gallery configurable)
+  Fonts are set per gallery via --font-display / --font-body / --font-mono.
+*/
+
+:root {
+  /* LIGHT (default) — clean Bootstrap-ish surfaces */
+  --bg:        #ffffff;
+  --bg-2:      #f8f9fa;
+  --surface:   #ffffff;
+  --surface-2: #f1f3f5;
+  --border:    #dee2e6;
+  --border-2:  #ced4da;
+  --text:      #1c1f23;
+  --text-2:    #495057;
+  --text-3:    #868e96;
+  --brand:     #E8442A;
+  --accent:    #C6B400;   /* hi-vis reads better slightly deeper on white */
+  --shadow:    0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+  --shadow-lg: 0 10px 30px rgba(0,0,0,.12);
+
+  /* fonts — overridden per gallery */
+  --font-display: 'Saira Condensed', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Space Mono', ui-monospace, monospace;
+
+  --radius: 8px;
+}
+
+[data-theme="dark"] {
+  --bg:        #17181A;
+  --bg-2:      #1E2023;
+  --surface:   #26292E;
+  --surface-2: #31353B;
+  --border:    #31353B;
+  --border-2:  #3d424a;
+  --text:      #F2EFE9;
+  --text-2:    #A6ACB4;
+  --text-3:    #6b7178;
+  --brand:     #E8442A;
+  --accent:    #D6E04B;
+  --shadow:    0 1px 3px rgba(0,0,0,.4);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,.5);
+}
+
+html { -webkit-tap-highlight-color: transparent; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  overscroll-behavior-y: none;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color .2s ease, color .2s ease;
+}
+
+.display { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; line-height: 0.98; }
+.eyebrow { font-family: var(--font-mono); font-size: .6875rem; letter-spacing: .16em; text-transform: uppercase; color: var(--text-3); }
+.data    { font-family: var(--font-mono); font-size: .75rem; letter-spacing: .02em; }
+
+/* Signature stripe — reads on both themes */
+.turnout-stripe {
+  height: 10px;
+  background:
+    linear-gradient(var(--accent), var(--accent)) top / 100% 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) bottom / 100% 2px no-repeat,
+    repeating-linear-gradient(-45deg, var(--border-2) 0 8px, var(--surface-2) 8px 16px) center / 100% 6px no-repeat;
+}
+.turnout-stripe--thin {
+  height: 4px;
+  background:
+    linear-gradient(var(--accent), var(--accent)) top / 100% 1px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) bottom / 100% 1px no-repeat,
+    var(--surface-2);
+}
+
+*:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+.btn-primary {
+  background: var(--brand); color: #fff; font-weight: 600;
+  border: none; border-radius: var(--radius); transition: filter .15s, box-shadow .15s;
+  box-shadow: var(--shadow);
+}
+.btn-primary:hover { filter: brightness(1.06); }
+.btn-ghost {
+  border: 1px solid var(--border); color: var(--text); background: var(--surface);
+  border-radius: var(--radius); transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.btn-ghost:hover { border-color: var(--border-2); box-shadow: var(--shadow); }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+
+.field {
+  width: 100%; border: 1px solid var(--border); background: var(--bg);
+  border-radius: var(--radius); color: var(--text);
+  padding: .625rem .75rem; outline: none; transition: border-color .15s, box-shadow .15s;
+}
+.field:focus { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent); }
+
+/* The photo viewer stays on a near-black backdrop in BOTH themes — this is
+   viewing chrome, not app chrome, and photos read best against neutral dark.
+   Standard in light apps too (Google Photos, Pixieset's viewer). */
+.viewer-backdrop { background: rgba(10,10,12,.96); }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration:.01ms!important; transition-duration:.01ms!important; } }
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

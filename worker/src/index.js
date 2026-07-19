@@ -65,6 +65,7 @@ const s3 = new S3Client({
   endpoint: process.env.S3_ENDPOINT,
   region: process.env.S3_REGION || "auto",
   credentials: { accessKeyId: process.env.S3_ACCESS_KEY, secretAccessKey: process.env.S3_SECRET },
+  forcePathStyle: true, // keep addressing consistent with app/src/lib/storage.ts
 });
 
 async function pull(key, dest) {

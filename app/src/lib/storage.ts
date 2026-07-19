@@ -33,6 +33,14 @@ function client(): S3Client {
       endpoint: required("S3_ENDPOINT"),
       region: process.env.S3_REGION || "auto",
       credentials: { accessKeyId: required("S3_ACCESS_KEY"), secretAccessKey: required("S3_SECRET") },
+      // Without this, the SDK defaults to virtual-hosted-style URLs
+      // (https://<bucket>.<account>.r2.cloudflarestorage.com/...), which is a
+      // different origin than S3_ENDPOINT — and middleware.ts's CSP connect-src
+      // only allow-lists S3_ENDPOINT itself. Browsers then silently block the
+      // presigned PUT (a CSP violation looks identical to a dropped connection
+      // from JS: no response, onerror fires). Path-style keeps every request on
+      // S3_ENDPOINT's exact origin so it always matches the CSP.
+      forcePathStyle: true,
     });
   }
   return _s3;

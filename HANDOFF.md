@@ -240,24 +240,36 @@ docker compose logs worker --tail 50
 
 The browser uploads straight to R2 via a presigned PUT (`Uploader.tsx` → `put()`).
 If that XHR fails with no response at all — not a 4xx/5xx, literally no response —
-it's almost always because **the R2 bucket has no CORS policy**, so the browser
-blocks the request itself before it leaves (a CORS preflight rejection looks
-identical to a dropped connection from JS). This bites hardest right after a
-storage migration (e.g. B2 → R2) because the CORS policy lives on the bucket, not
-in this repo, and a fresh bucket has none.
+the browser blocked the request itself before it left. Two independent causes
+produce the identical symptom; check both.
 
-Fix: apply `deploy/r2-cors.json` to the bucket. Easiest path, Cloudflare
-dashboard → R2 → your bucket → Settings → CORS Policy → paste the contents of
-that file (edit `AllowedOrigins` to match your actual domain first). Or via the
-S3-compatible API if you have `aws` configured with R2 credentials:
+**1. CSP `connect-src` / addressing-style mismatch (fixed in code, but only from
+this point forward).** `storage.ts`'s `S3Client` didn't set `forcePathStyle`, so
+the AWS SDK defaulted to virtual-hosted-style URLs
+(`https://<bucket>.<account>.r2.cloudflarestorage.com/...`) — a different origin
+than `S3_ENDPOINT` itself. `middleware.ts`'s CSP `connect-src` only allow-lists
+`S3_ENDPOINT` verbatim, so the browser silently blocked every upload PUT as a
+CSP violation (indistinguishable from CORS/network failure client-side — no
+response, `onerror` fires). Fixed by forcing path-style addressing (same fix in
+`worker/src/index.js` for consistency, though the worker isn't browser-side so
+CSP never applied to it). **This needed a code deploy, not a Cloudflare setting**
+— redeploy after pulling this fix.
+
+**2. R2 bucket has no CORS policy.** Separate from #1 — even with addressing
+fixed, the browser still needs the bucket's CORS policy to allow the PUT.
+Cloudflare dashboard → R2 → your bucket → Settings → CORS Policy → paste
+`deploy/r2-cors.json` (edit `AllowedOrigins` to your actual domain first). Or:
 ```
 aws s3api put-bucket-cors --endpoint-url "$S3_ENDPOINT" \
   --bucket "$S3_BUCKET" --cors-configuration file://deploy/r2-cors.json
 ```
-Confirm it's set with `aws s3api get-bucket-cors --endpoint-url "$S3_ENDPOINT" --bucket "$S3_BUCKET"`.
+Confirm with `aws s3api get-bucket-cors --endpoint-url "$S3_ENDPOINT" --bucket "$S3_BUCKET"`.
 
-Until this is set, no guest upload can ever complete — which also means nothing
-ever reaches the moderation queue (queue requires `status='ready'`, which an
-asset only reaches after its bytes actually land in R2). If uploads still fail
-after CORS is confirmed correct, check `docker compose logs worker` next —
-processing failures also keep assets out of the queue (they never reach `ready`).
+Until both are right, no guest upload can ever complete — which also means
+nothing ever reaches the moderation queue (queue requires `status='ready'`,
+which an asset only reaches after its bytes actually land in R2). Asset rows
+from failed attempts get created (visible as a placeholder in admin, stuck at
+`status='awaiting_upload'`) but never go further — harmless clutter, safe to
+ignore or delete. If uploads still fail after both are confirmed correct, check
+`docker compose logs worker` next — processing failures also keep assets out
+of the queue (they never reach `ready`).

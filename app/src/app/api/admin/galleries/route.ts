@@ -12,8 +12,8 @@ export async function GET() {
   const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
   const galleries = await q(
     `SELECT g.*,
-       (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='visible') AS visible,
-       (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='pending' AND a.status='ready') AS pending
+       (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='visible' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS visible,
+       (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='pending' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS pending
      FROM galleries g ORDER BY g.event_date DESC NULLS LAST`);
   return NextResponse.json({ galleries });
 }

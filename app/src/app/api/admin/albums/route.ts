@@ -5,7 +5,7 @@ export async function GET(req: NextRequest) {
   const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
   const gid = new URL(req.url).searchParams.get("gallery");
   const albums = await q(
-    `SELECT al.*, (SELECT count(*) FROM assets a WHERE a.album_id=al.id AND a.visibility='visible') AS visible
+    `SELECT al.*, (SELECT count(*) FROM assets a WHERE a.album_id=al.id AND a.visibility='visible' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS visible
      FROM albums al WHERE al.gallery_id=$1 ORDER BY al.sort_order, al.created_at`, [gid]);
   return NextResponse.json({ albums });
 }

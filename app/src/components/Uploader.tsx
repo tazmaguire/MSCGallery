@@ -4,14 +4,14 @@
  * skip this and use the admin ingest path). Consent checkbox is required and the
  * licence text comes from the gallery config. PIN links show a gate first.
  */
-import { useState, useRef, useCallback } from "react";
-import { Upload, Check, AlertCircle, Loader2, Lock, ShieldCheck, X } from "lucide-react";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { Upload, Check, AlertCircle, Loader2, Lock, ShieldCheck, X, Info, Images, RotateCcw } from "lucide-react";
 
 type Job = { id: string; file: File; progress: number; status: "staged" | "queued" | "uploading" | "done" | "error"; error?: string };
 const PARALLEL = 4;
 
-export default function Uploader({ token, mode, galleryName, terms, brand }: {
-  token: string; mode: "open" | "pin"; galleryName: string; terms: string; brand: { primary: string; accent: string };
+export default function Uploader({ token, mode, gallerySlug, galleryName, terms, brand }: {
+  token: string; mode: "open" | "pin"; gallerySlug: string; galleryName: string; terms: string; brand: { primary: string; accent: string };
 }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [submitted, setSubmitted] = useState(false);
@@ -66,9 +66,15 @@ export default function Uploader({ token, mode, galleryName, terms, brand }: {
     Promise.all(Array.from({ length: 2 }, async () => { for (;;) { const j = queue.shift(); if (!j) return; await uploadOne(j); } }));
   }, [jobs, uploadOne]);
 
+  // Same contributor/consent stays captured — only the batch of files resets.
+  const submitMore = useCallback(() => { setJobs([]); setSubmitted(false); }, []);
+
   const staged = jobs.filter((j) => j.status === "staged");
   const done = jobs.filter((j) => j.status === "done").length;
   const ready = name.trim() && agreed;
+  const allDone = submitted && jobs.length > 0 && jobs.every((j) => j.status === "done");
+  const confirmHeadingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { if (allDone) confirmHeadingRef.current?.focus(); }, [allDone]);
 
   // PIN gate first
   if (!pinOk) return (
@@ -82,6 +88,26 @@ export default function Uploader({ token, mode, galleryName, terms, brand }: {
           className="mb-3 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-3 text-center font-mono text-lg tracking-[0.4em] outline-none focus:border-[var(--text-2)]" />
         {gateError && <p className="data mb-3 text-[var(--brand)]">{gateError}</p>}
         <button onClick={() => { if (pin.length >= 4) { setPinOk(true); setGateError(""); } }} className="btn-primary w-full py-3">Continue</button>
+      </div>
+    </div>
+  );
+
+  // Post-submission confirmation — replaces the whole form, not a toast.
+  if (allDone) return (
+    <div className="grid min-h-screen place-items-center px-4" style={style}>
+      <div className="w-full max-w-sm text-center">
+        <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-blue-500/15"><Info size={22} className="text-blue-400" /></div>
+        <h1 ref={confirmHeadingRef} tabIndex={-1} className="display mb-3 text-3xl outline-none">
+          {done === 1 ? "Photo submitted" : "Photos submitted"}
+        </h1>
+        <div className="mb-6 rounded-[var(--radius)] border border-blue-500/25 bg-blue-500/10 p-4 text-sm text-blue-100">
+          Your {done === 1 ? "photo is" : "photos are"} in the moderation queue and will appear once approved by
+          an admin. Thank you for submitting your photos!
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <button onClick={submitMore} className="btn-ghost flex items-center justify-center gap-2 py-3 font-medium"><RotateCcw size={16} />Submit more</button>
+          <a href={`/g/${gallerySlug}`} className="btn-primary flex items-center justify-center gap-2 py-3 font-medium"><Images size={16} />Go to gallery</a>
+        </div>
       </div>
     </div>
   );
@@ -152,13 +178,6 @@ export default function Uploader({ token, mode, galleryName, terms, brand }: {
         <div className="mt-4 grid grid-cols-2 gap-3">
           <button onClick={cancelAll} className="btn-ghost py-3 font-medium">Cancel</button>
           <button onClick={submit} className="btn-primary py-3 font-medium">Submit {staged.length} {staged.length === 1 ? "photo" : "photos"}</button>
-        </div>
-      )}
-
-      {submitted && done > 0 && done === jobs.length && (
-        <div className="mt-6 rounded-[var(--radius)] border border-emerald-500/20 bg-emerald-500/5 p-4">
-          <p className="text-sm font-medium text-emerald-300">Thank you — they're with us.</p>
-          <p className="data mt-1 text-[var(--text-2)]">Your {done === 1 ? "photo is" : "photos are"} in the queue for moderation. Once approved, they'll appear on the gallery.</p>
         </div>
       )}
     </div>

@@ -9,12 +9,15 @@ import crypto from "node:crypto";
 export async function GET(req: NextRequest) {
   const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
   const gid = new URL(req.url).searchParams.get("gallery");
+  // Revoked links are soft-deleted (is_active=false) so uploaded photos and
+  // audit history survive — but they should disappear from this list the
+  // moment they're revoked, not linger looking clickable.
   const links = await q(
     `SELECT l.id, l.mode, l.token, l.label, l.is_active, l.target_album_id,
             c.display_name AS contributor_name, al.name AS album_name
      FROM upload_links l LEFT JOIN contributors c ON c.id=l.contributor_id
      LEFT JOIN albums al ON al.id=l.target_album_id
-     WHERE l.gallery_id=$1 ORDER BY l.created_at DESC`, [gid]);
+     WHERE l.gallery_id=$1 AND l.is_active ORDER BY l.created_at DESC`, [gid]);
   return NextResponse.json({ links });
 }
 
@@ -48,6 +51,9 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
   const { id } = await req.json();
+  // Soft-delete only — the link stops working and drops out of the list, but
+  // photos already uploaded through it aren't touched (assets FK to the
+  // gallery/album/contributor, never to the link itself).
   await q(`UPDATE upload_links SET is_active=false WHERE id=$1`, [id]);
   await audit(user.id, "revoke_link", { id }, hashIp(clientIp(req)));
   return NextResponse.json({ ok: true });

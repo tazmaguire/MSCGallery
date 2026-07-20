@@ -120,7 +120,10 @@ function LinksPanel({ gallery, albums, links, onClose, reload, showQr }: any) {
   const [copied, setCopied] = useState("");
   const site = typeof window !== "undefined" ? window.location.origin : "";
   const create = async () => { await fetch("/api/admin/links", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ galleryId: gallery.id, mode, pin, contributorName: name, targetAlbumId: albumId || null, label }) }); setPin(""); setName(""); setLabel(""); reload(); };
-  const revoke = async (id: string) => { await fetch("/api/admin/links", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) }); reload(); };
+  const revoke = async (id: string) => {
+    if (!confirm("Delete this link? People with the URL will no longer be able to upload. Photos already submitted through it are kept.")) return;
+    await fetch("/api/admin/links", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) }); reload();
+  };
   const copy = (t: string) => { navigator.clipboard.writeText(`${site}/u/${t}`); setCopied(t); setTimeout(() => setCopied(""), 1500); };
   const icon = (m: string) => m === "photographer" ? <Camera size={13} className="text-sky-400" /> : m === "pin" ? <KeyRound size={13} className="text-[var(--accent)]" /> : <Users size={13} className="text-emerald-400" />;
 

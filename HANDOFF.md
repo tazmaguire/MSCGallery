@@ -159,6 +159,37 @@ Each migration is written with `IF NOT EXISTS` guards so re-running it is safe.
 
 ---
 
+## Public-visibility checklist
+
+The rule: nothing appears, is counted, is downloadable, or can be a cover
+photo anywhere public unless `status='ready' AND visibility='visible' AND
+album.is_private=false AND gallery.is_published=true` (and `deletion_status`
+is null/empty). Re-run this checklist after touching any public route —
+verified as of the C audit (this covers every public read surface as of that
+audit):
+
+- [x] `app/page.tsx` (home listing) — `is_published` on the gallery query;
+      gallery-card cover photo join checks the cover asset's own
+      visibility/status/deletion_status (was missing this — fixed).
+- [x] `g/[slug]/page.tsx` (gallery + albums) — main asset query has the full
+      rule; album photo counts now exclude deleted assets (was missing —
+      fixed); album cover and gallery cover joins check the cover asset's own
+      visibility/status/deletion_status (was missing — fixed).
+- [x] `g/[slug]/download/route.ts` (zip, whole/album/cart-selection) — full
+      rule including `public_key IS NOT NULL`; a cart `?id=` list is
+      intersected with the same WHERE, so a non-public id is silently
+      dropped, never trusted from the client.
+- [x] `d/[id]/route.ts` (single-photo download redirect) — full rule inline.
+- [x] Gallery-password-gated routes (`g/[slug]/page.tsx`, its `download/`,
+      and `d/[id]`) all additionally require `checkGalleryAccess` when
+      `view_password_hash` is set — checked independently of the visibility
+      rule, not a substitute for it.
+- Admin routes (`api/admin/*`, `/admin/*`) are intentionally exempt — they
+  require `getUser()` and are where pending/private content is *supposed* to
+  be visible to logged-in staff.
+
+---
+
 ## The deploy loop (how to ship a change)
 
 There is no CI yet. To deploy after a code change:

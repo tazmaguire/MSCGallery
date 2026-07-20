@@ -25,7 +25,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
      JOIN contributors c ON c.id = a.contributor_id
      JOIN albums al ON al.id = a.album_id
      WHERE a.id = $1 AND a.visibility='visible' AND a.status='ready'
-       AND a.public_key IS NOT NULL AND a.deletion_status IS NULL
+       AND a.public_key IS NOT NULL AND (a.deletion_status IS NULL OR a.deletion_status='')
        AND al.is_private = false AND g.is_published = true`,
     [params.id]
   );

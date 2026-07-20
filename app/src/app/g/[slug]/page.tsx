@@ -12,19 +12,24 @@ export default async function P({ params }: { params: { slug: string } }) {
   if (g.view_password_hash && !checkGalleryAccess(cookies().get(`gv_${g.id}`)?.value, g.id))
     return <GalleryPasswordGate slug={g.slug} galleryName={g.name} siteName={site.name} />;
   const albums = await q(
-    `SELECT al.id, al.name, al.slug, (SELECT count(*) FROM assets a WHERE a.album_id=al.id AND a.visibility='visible' AND a.status='ready') AS count
+    `SELECT al.id, al.name, al.slug,
+            (SELECT count(*) FROM assets a WHERE a.album_id=al.id AND a.visibility='visible' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS count
      FROM albums al WHERE al.gallery_id=$1 AND al.is_private=false ORDER BY al.sort_order`, [g.id]);
 
   // Custom covers (db/002_customisation.sql) — best-effort: an older DB that
   // hasn't had the migration applied yet just falls back to no custom cover.
   const albumCoverThumb: Record<string, string> = {};
   let galleryCoverThumb: string | null = null;
+  // Cover asset must pass the same public-visibility rule as everything else —
+  // a photo picked as a cover before approval (or later rejected/deleted)
+  // must not leak out through the cover slot.
+  const COVER_VISIBLE = `cov.visibility='visible' AND cov.status='ready' AND (cov.deletion_status IS NULL OR cov.deletion_status='')`;
   try {
-    const covRows = await q(`SELECT al.id, cov.thumb_key FROM albums al JOIN assets cov ON cov.id = al.cover_asset_id WHERE al.gallery_id=$1`, [g.id]);
+    const covRows = await q(`SELECT al.id, cov.thumb_key FROM albums al JOIN assets cov ON cov.id = al.cover_asset_id WHERE al.gallery_id=$1 AND ${COVER_VISIBLE}`, [g.id]);
     for (const r of covRows) if (r.thumb_key) albumCoverThumb[r.id] = r.thumb_key;
   } catch {}
   try {
-    const [gc] = await q(`SELECT COALESCE(cov.preview_key, cov.poster_key, cov.thumb_key) AS k FROM galleries gal JOIN assets cov ON cov.id = gal.cover_asset_id WHERE gal.id=$1`, [g.id]);
+    const [gc] = await q(`SELECT COALESCE(cov.preview_key, cov.poster_key, cov.thumb_key) AS k FROM galleries gal JOIN assets cov ON cov.id = gal.cover_asset_id WHERE gal.id=$1 AND ${COVER_VISIBLE}`, [g.id]);
     galleryCoverThumb = gc?.k || null;
   } catch {}
   const withPhotos = albums.filter((a: any) => Number(a.count) > 0);

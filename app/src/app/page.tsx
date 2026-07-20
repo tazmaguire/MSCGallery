@@ -8,7 +8,9 @@ export default async function Home() {
   // Custom covers (db/002_customisation.sql) — best-effort, see g/[slug]/page.tsx for why.
   const coverThumb: Record<string, string> = {};
   try {
-    const rows = await q(`SELECT gal.id, cov.thumb_key FROM galleries gal JOIN assets cov ON cov.id = gal.cover_asset_id`);
+    const rows = await q(
+      `SELECT gal.id, cov.thumb_key FROM galleries gal JOIN assets cov ON cov.id = gal.cover_asset_id
+       WHERE cov.visibility='visible' AND cov.status='ready' AND (cov.deletion_status IS NULL OR cov.deletion_status='')`);
     for (const r of rows) if (r.thumb_key) coverThumb[r.id] = r.thumb_key;
   } catch {}
   return (

@@ -53,7 +53,7 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
        AND a.visibility = 'visible'
        AND a.status = 'ready'
        AND a.public_key IS NOT NULL
-       AND a.deletion_status IS NULL
+       AND (a.deletion_status IS NULL OR a.deletion_status = '')
        AND al.is_private = false
        AND ($2::text IS NULL OR al.slug = $2)
        AND ($3::uuid[] IS NULL OR a.id = ANY($3::uuid[]))

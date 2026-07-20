@@ -1,42 +1,47 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
-import { Check, X, Loader2, Undo2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Check, X, Loader2, Undo2, ShieldCheck } from "lucide-react";
 
 type GalleryTab = { id: string; name: string; n: number };
 
 export default function ModerationQueue({ initial, galleries, activeGallery }: { initial: any[]; galleries: GalleryTab[]; activeGallery: string | null }) {
   const [queue, setQueue] = useState(initial);
-  const [i, setI] = useState(0); const [busy, setBusy] = useState(false); const [undo, setUndo] = useState<any>(null);
-  const current = queue[i];
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [undo, setUndo] = useState<{ ids: string[]; assets: any[]; action: "approve" | "reject" } | null>(null);
   const total = galleries.reduce((s, g) => s + g.n, 0);
-  const act = useCallback(async (action: "approve" | "reject") => {
-    if (!current || busy) return; setBusy(true); const asset = current;
-    setQueue((q) => q.filter((a) => a.id !== asset.id)); setI((n) => Math.min(n, queue.length - 2));
-    setUndo({ asset, action }); setTimeout(() => setUndo((u: any) => u?.asset.id === asset.id ? null : u), 6000);
-    try { await fetch("/api/admin/moderate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds: [asset.id], action }) }); }
-    catch { setQueue((q) => [asset, ...q]); } finally { setBusy(false); }
-  }, [current, busy, queue.length]);
-  const undoLast = useCallback(async () => { if (!undo) return;
-    await fetch("/api/admin/moderate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds: [undo.asset.id], action: "requeue" }) });
-    setQueue((q) => [undo.asset, ...q]); setUndo(null); }, [undo]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "a") act("approve"); if (e.key.toLowerCase() === "r") act("reject");
-      if (e.key === "ArrowRight") setI((n) => Math.min(n + 1, queue.length - 1)); if (e.key === "ArrowLeft") setI((n) => Math.max(n - 1, 0));
-    }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
-  }, [act, queue.length]);
 
-  const touchStartX = useRef<number | null>(null);
-  const onTouchStart = (e: React.TouchEvent) => { touchStartX.current = e.touches[0].clientX; };
-  const onTouchEnd = (e: React.TouchEvent) => {
-    if (touchStartX.current === null) return;
-    const dx = e.changedTouches[0].clientX - touchStartX.current;
-    touchStartX.current = null;
-    if (Math.abs(dx) < 50) return;
-    if (dx < 0) setI((n) => Math.min(n + 1, queue.length - 1));
-    if (dx > 0) setI((n) => Math.max(n - 1, 0));
+  const toggle = useCallback((id: string) => {
+    setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }, []);
+
+  const act = useCallback(async (ids: string[], action: "approve" | "reject") => {
+    if (!ids.length || busy) return;
+    setBusy(true);
+    const removed = queue.filter((a) => ids.includes(a.id));
+    setQueue((q) => q.filter((a) => !ids.includes(a.id)));
+    setSel((s) => { const n = new Set(s); ids.forEach((id) => n.delete(id)); return n; });
+    setUndo({ ids, assets: removed, action });
+    setTimeout(() => setUndo((u) => (u?.ids.join() === ids.join() ? null : u)), 6000);
+    try {
+      await fetch("/api/admin/moderate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds: ids, action }) });
+    } catch {
+      setQueue((q) => [...removed, ...q]); // put them back if the request itself failed
+    } finally { setBusy(false); }
+  }, [busy, queue]);
+
+  const approveSelected = () => act([...sel], "approve");
+  const approveAll = () => {
+    if (!confirm(`Approve all ${queue.length} photo${queue.length === 1 ? "" : "s"} currently listed${activeGallery ? " for this event" : ""}? They'll go public immediately.`)) return;
+    act(queue.map((a) => a.id), "approve");
   };
+  const rejectOne = (id: string) => act([id], "reject");
+  const undoLast = useCallback(async () => {
+    if (!undo) return;
+    await fetch("/api/admin/moderate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds: undo.ids, action: "requeue" }) });
+    setQueue((q) => [...undo.assets, ...q]); setUndo(null);
+  }, [undo]);
 
   const tabs = galleries.length > 1 && (
     <div className="no-scrollbar mb-3 flex gap-1.5 overflow-x-auto">
@@ -58,39 +63,50 @@ export default function ModerationQueue({ initial, galleries, activeGallery }: {
       {undo && <UndoBar undo={undo} onUndo={undoLast} />}
     </div>
   );
+
   return (
-    <div className="mx-auto flex min-h-screen max-w-3xl flex-col px-4 py-4">
+    <div className="mx-auto max-w-7xl px-4 py-4">
       {tabs}
-      <div className="mb-3 flex items-center justify-between">
-        <div><h1 className="display text-2xl">Moderation</h1><p className="data text-[var(--text-2)]">{queue.length} waiting · {i + 1} of {queue.length}</p></div>
-        <div className="data hidden text-[var(--text-3)] sm:block"><kbd className="rounded bg-white/10 px-1.5 py-0.5">A</kbd> approve · <kbd className="rounded bg-white/10 px-1.5 py-0.5">R</kbd> reject</div>
-      </div>
-      <div className="relative flex flex-1 items-center justify-center rounded-[var(--radius)] bg-[var(--surface)]" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-        <img src={current.preview || current.thumb} alt="" className="max-h-[55vh] w-full object-contain" />
-        {i > 0 && <button onClick={() => setI(i - 1)} className="absolute left-2 rounded-full bg-black/50 p-2 backdrop-blur"><ChevronLeft size={20} /></button>}
-        {i < queue.length - 1 && <button onClick={() => setI(i + 1)} className="absolute right-2 rounded-full bg-black/50 p-2 backdrop-blur"><ChevronRight size={20} /></button>}
-        <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
-          <span className="data rounded-full bg-[var(--accent)]/20 px-2.5 py-1 font-bold text-[var(--accent)] backdrop-blur">GUEST UPLOAD</span>
-          {current.gallery_name && <span className="data rounded-full bg-black/50 px-2.5 py-1 font-bold text-white/90 backdrop-blur">{current.gallery_name}</span>}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="display text-2xl">Moderation</h1>
+          <p className="data text-[var(--text-2)]">{queue.length} waiting{sel.size > 0 ? ` · ${sel.size} selected` : ""}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={approveAll} disabled={busy} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm disabled:opacity-50"><ShieldCheck size={15} />Approve all ({queue.length})</button>
+          <button onClick={approveSelected} disabled={busy || !sel.size} className="flex items-center gap-2 rounded-[var(--radius)] bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}Approve selected ({sel.size})
+          </button>
         </div>
       </div>
-      <div className="data mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[var(--text-2)]">
-        <span className="text-[var(--text)]">SHOT BY {current.first_name || current.contributor_name || "Unknown"}</span>
-        {current.album_name && <span>{current.album_name}</span>}
-        <span>{current.width} × {current.height}</span><span>{(current.bytes / 1e6).toFixed(1)}MB</span>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+        {queue.map((a) => { const on = sel.has(a.id); return (
+          <div key={a.id} className={`group relative overflow-hidden rounded-[var(--radius)] border bg-[var(--surface)] ${on ? "border-[var(--brand)] ring-2 ring-[var(--brand)]" : "border-[var(--border)]"}`}>
+            <img src={a.preview || a.thumb} alt="" loading="lazy" onClick={() => toggle(a.id)} className="aspect-[4/3] w-full cursor-pointer bg-[var(--bg-2)] object-cover" />
+            <button onClick={() => toggle(a.id)} title={on ? "Deselect" : "Select"}
+              className={`absolute left-2 top-2 grid h-7 w-7 place-items-center rounded-full backdrop-blur transition ${on ? "bg-[var(--brand)] text-white" : "bg-black/40 text-white/90"}`}>
+              {on && <Check size={14} />}
+            </button>
+            <button onClick={() => rejectOne(a.id)} disabled={busy} title="Reject"
+              className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/40 text-white/90 backdrop-blur transition hover:bg-[var(--brand)] disabled:opacity-50">
+              <X size={14} />
+            </button>
+            <div className="data absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-4 text-white/90">
+              {a.gallery_name && <span className="font-bold">{a.gallery_name}</span>}{a.gallery_name && " · "}{a.first_name || a.contributor_name || "Unknown"}
+            </div>
+          </div>
+        ); })}
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-3 pb-4">
-        <button onClick={() => act("reject")} disabled={busy} className="btn-ghost flex items-center justify-center gap-2 py-4 font-semibold active:scale-95 disabled:opacity-50">{busy ? <Loader2 size={18} className="animate-spin" /> : <X size={18} />}Reject</button>
-        <button onClick={() => act("approve")} disabled={busy} className="flex items-center justify-center gap-2 rounded-[var(--radius)] bg-emerald-600 py-4 font-semibold text-white active:scale-95 disabled:opacity-50">{busy ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}Approve</button>
-      </div>
-      <p className="data pb-4 text-center text-[var(--text-3)]">Rejecting hides the photo — nothing is deleted.</p>
+
       {undo && <UndoBar undo={undo} onUndo={undoLast} />}
     </div>
   );
 }
 function UndoBar({ undo, onUndo }: any) {
+  const n = undo.ids.length;
   return <div className="fixed inset-x-4 bottom-4 z-50 mx-auto flex max-w-sm items-center justify-between gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-2xl">
-    <span className="text-sm">{undo.action === "approve" ? "Approved" : "Rejected"}</span>
+    <span className="text-sm">{n} {n === 1 ? "photo" : "photos"} {undo.action === "approve" ? "approved" : "rejected"}</span>
     <button onClick={onUndo} className="flex items-center gap-1.5 text-sm font-semibold text-[var(--accent)]"><Undo2 size={14} />Undo</button>
   </div>;
 }

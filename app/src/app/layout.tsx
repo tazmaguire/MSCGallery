@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { siteConfig } from "@/lib/siteConfig";
 
 export async function generateMetadata() {
-  const site = siteConfig();
+  const site = await siteConfig();
   return {
     title: site.name,
     description: site.tagline,
@@ -14,9 +14,12 @@ export async function generateMetadata() {
 // Default fonts loaded app-wide (galleries can override with their own).
 const DEFAULT_FONTS = "https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap";
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const theme = cookies().get("gallery_theme")?.value === "dark" ? "dark" : "light";
-  const site = siteConfig();
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const site = await siteConfig();
+  // Explicit cookie choice wins; otherwise fall back to the admin-configured
+  // site default (site_settings.theme), then light.
+  const cookieTheme = cookies().get("gallery_theme")?.value;
+  const theme = cookieTheme === "dark" || cookieTheme === "light" ? cookieTheme : site.theme || "light";
   return (
     <html lang="en-GB" data-theme={theme}>
       <head>

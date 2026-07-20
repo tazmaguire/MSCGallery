@@ -8,7 +8,7 @@ import GalleryPasswordGate from "@/components/GalleryPasswordGate";
 export const dynamic = "force-dynamic";
 export default async function P({ params }: { params: { slug: string } }) {
   const [g] = await q(`SELECT * FROM galleries WHERE slug=$1 AND is_published`, [params.slug]); if (!g) notFound();
-  const site = siteConfig();
+  const site = await siteConfig();
   if (g.view_password_hash && !checkGalleryAccess(cookies().get(`gv_${g.id}`)?.value, g.id))
     return <GalleryPasswordGate slug={g.slug} galleryName={g.name} siteName={site.name} />;
   const albums = await q(

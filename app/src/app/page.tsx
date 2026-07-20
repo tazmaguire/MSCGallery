@@ -3,7 +3,7 @@ import { siteConfig } from "@/lib/siteConfig";
 import SiteHeader from "@/components/SiteHeader";
 export const dynamic = "force-dynamic";
 export default async function Home() {
-  const site = siteConfig();
+  const site = await siteConfig();
   const g = await q(`SELECT id, slug, name, event_date, location, brand FROM galleries WHERE is_published ORDER BY event_date DESC NULLS LAST`);
   // Custom covers (db/002_customisation.sql) — best-effort, see g/[slug]/page.tsx for why.
   const coverThumb: Record<string, string> = {};
@@ -30,6 +30,12 @@ export default async function Home() {
           {!g.length && <p className="data text-[var(--text-2)]">No galleries yet.</p>}
         </div>
       </div>
+      {(site.footerText || site.contactEmail) && (
+        <footer className="mx-auto max-w-4xl px-6 py-8 text-center">
+          {site.footerText && <p className="data text-[var(--text-3)]">{site.footerText}</p>}
+          {site.contactEmail && <a href={`mailto:${site.contactEmail}`} className="data mt-1 inline-block text-[var(--text-3)] hover:text-[var(--text-2)]">{site.contactEmail}</a>}
+        </footer>
+      )}
     </div>
   );
 }

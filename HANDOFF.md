@@ -98,24 +98,31 @@ app/                     Next.js 14 (App Router, TypeScript)
     filetype.ts          magic-byte allow-list (worker rejects impostors)
     naming.ts            storedFilename = Firstname-… ; downloadFilename = MSC2026_…
     fonts.ts             curated Google Fonts lists + href builder (per-gallery)
-    siteConfig.ts        app-wide white-label identity (SITE_* env vars, lazy)
+    siteConfig.ts        app-wide white-label identity — async, DB (site_settings)
+                         overrides SITE_* env vars overrides hardcoded defaults
   src/app/
     g/[slug]/            public gallery (page, password-gated if set) + download/
-                         (streaming zip, also password-gated + cart-selection aware)
+                         (streaming zip, also password-gated + cart-selection aware,
+                         admin-only unless it's a cart selection)
     d/[id]/              download redirect → presigned R2 URL (free egress, also
                          password-gated)
     u/[token]/           guest upload page (open / pin modes)
-    admin/               list, gallery manager, moderation queue, login,
-                         account (self-service), users (owner-only)
+    admin/               list, gallery manager, moderation queue (grid +
+                         multi-select), login, account (self-service),
+                         users (owner-only), settings (owner-only, global branding)
     api/                 upload/presign (THE security boundary), admin/*, auth,
                          gallery/unlock (gallery password check),
-                         gallery/[slug]/search (public bib-number search)
-  src/components/        Gallery (+ cart, breadcrumb, bib search), Uploader
-                         (stage → submit → confirmation), ModerationQueue
-                         (+ gallery filter tabs), GalleryManager (+ delete/
-                         edit/cover/tags/bib search), ThemeToggle, AdminNav,
-                         GalleryList, SiteHeader, GalleryPasswordGate,
-                         AccountForm, UsersManager
+                         gallery/[slug]/search (bib-number search backend —
+                         no public UI entry point right now, see below)
+  src/components/        Gallery (+ cart, breadcrumb), Uploader (stage → submit
+                         → confirmation), ModerationQueue (grid, multi-select,
+                         approve-selected/approve-all, gallery filter tabs),
+                         GalleryManager (+ delete/edit/cover/tags/bib search —
+                         admin-side tagging UI stays, only the PUBLIC bib
+                         search box was pulled), ThemeToggle, AdminNav (shows
+                         the deployed build's git SHA — see below), GalleryList,
+                         SiteHeader, GalleryPasswordGate, AccountForm,
+                         UsersManager, SiteSettingsForm
   src/lib/moderation.ts  single source of truth for pending-queue count/list/
                          galleries — every page reads through this, not its own query
   src/middleware.ts      security headers (CSP scoped to self + R2)
@@ -128,6 +135,10 @@ db/003_tagging.sql       asset_tags, participants stub, assets.tag_status —
                          bib/face-tagging foundation, no ML in this round
 db/004_orders_stub.sql   orders + order_items — unused schema stub for a future
                          paid flow; the cart itself is client-side, download-only
+db/005_site_settings.sql single-row site_settings — global branding set from
+                         /admin/settings (name/tagline/colours/theme/footer/
+                         contact + uploaded logo/favicon, stored under the same
+                         thumbs path as thumbnails, see below)
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -167,6 +178,10 @@ Each migration is written with `IF NOT EXISTS` guards so re-running it is safe.
   admin land `visible`. Nothing is public until `status='ready'` AND
   `visibility='visible'` AND its album is not private AND gallery `is_published`.
 - Storage keys are stored, never URLs — backend stays swappable.
+- **site_settings**: singleton (one row, `id boolean PRIMARY KEY DEFAULT true`).
+  Global branding, separate from per-gallery `galleries.brand`. Read via
+  `siteConfig()` (async — DB row overrides `SITE_*` env vars overrides
+  hardcoded defaults), written via `/admin/settings` (owner-only).
 
 ---
 
@@ -218,6 +233,16 @@ docker compose up -d
 **Cache gotcha:** Docker's layer cache keys off `COPY . .`; if a source edit
 doesn't seem to take effect, the build silently reused a cached layer. Force it:
 `docker compose build --no-cache app`. This bit us repeatedly during setup.
+
+**Before reporting "this UI still shows the old thing" as a bug:** check the
+build version in the admin nav (top-right, small `v<sha>` text) against
+`git log --oneline -1` on the server. If they don't match, it's a deploy
+lag/cache issue, not a code bug — run `./deploy/update.sh --fresh`. This has
+already burned a full round of back-and-forth once (a UI element reported
+"still present" three times turned out to already be removed in every commit
+— the live container just hadn't rebuilt). `deploy/update.sh` now stamps
+each build with the git short SHA (`--build-arg GIT_SHA`) specifically so
+this is a 5-second check instead of a re-diagnosis.
 
 Seed an admin user:
 ```
@@ -343,6 +368,34 @@ Verify with `curl -I https://gallery.memorialstairclimb.co.uk/thumbs/thumb/<some
 — should be `200`, not `403`. Once confirmed, the old
 `/root/pr-gallery/deploy/data/thumbs` copy can be deleted; nothing reads from
 there anymore after `./deploy/update.sh` picks up the compose change.
+
+---
+
+## Site branding storage — reuses the thumbs path, not R2
+
+Uploaded logo/favicon (`/admin/settings`) are written under `THUMB_DIR/branding/`
+(the same root as thumbnails — `/app/public/thumbs` in the container,
+`/srv/msc-thumbs` on the host) and served by the *existing* nginx `/thumbs/`
+location at `/thumbs/branding/<file>`. Deliberately **not** R2, and
+deliberately **not** a new bind mount / nginx location: it's small,
+rarely-changed, app-identity data (not per-event photo content), and reusing
+the path that's already fixed for uid-100 + world-readable access means zero
+new infra to get wrong. If you ever add another kind of site-wide upload,
+follow the same pattern rather than introducing a third storage path.
+
+---
+
+## Verifying a deploy actually landed
+
+The admin nav bar, shown on every `/admin/*` page (top-right, small `v<sha>`
+text, desktop only), shows the git short SHA baked into the running container — `deploy/update.sh` now passes
+`--build-arg GIT_SHA=$(git rev-parse --short HEAD)` to `docker compose build`.
+Compare it against `git log --oneline -1` on the server before concluding a
+"fix didn't work" is a real regression rather than a stale build — a UI
+element reported "still present" three rounds in a row turned out to be
+removed in every one of those commits; the live container just hadn't
+rebuilt each time. `./deploy/update.sh --fresh` forces a clean rebuild if the
+SHA doesn't match.
 
 ---
 

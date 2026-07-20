@@ -5,11 +5,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 echo "→ pulling latest…"; git pull
+export GIT_SHA="$(git rev-parse --short HEAD)"
 cd deploy
 if [[ "${1:-}" == "--fresh" ]]; then
-  echo "→ rebuilding (no cache)…"; docker compose build --no-cache app worker
+  echo "→ rebuilding (no cache)…"; docker compose build --no-cache --build-arg GIT_SHA="$GIT_SHA" app worker
 else
-  echo "→ building…"; docker compose build app worker
+  echo "→ building…"; docker compose build --build-arg GIT_SHA="$GIT_SHA" app worker
 fi
 echo "→ starting…"; docker compose up -d
 echo "→ status:"; docker compose ps

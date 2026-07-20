@@ -10,6 +10,11 @@ RUN npm run build
 FROM node:20-alpine AS run
 WORKDIR /app
 ENV NODE_ENV=production
+# Stamped by deploy/update.sh from the just-pulled commit — shown in AdminNav
+# so "is my fix actually live" is a glance, not a guess. Defaults to
+# "dev" for local/manual builds that don't pass it.
+ARG GIT_SHA=dev
+ENV BUILD_SHA=$GIT_SHA
 RUN addgroup -S app && adduser -S app -G app && apk add --no-cache su-exec
 COPY --from=build /app/public ./public
 COPY --from=build --chown=app:app /app/.next/standalone ./

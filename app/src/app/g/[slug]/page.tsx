@@ -69,7 +69,7 @@ export default async function P({ params }: { params: { slug: string } }) {
     contributors={[...cc.values()].sort((a, b) => b.count - a.count)}
     brand={{ primary: g.brand?.primary || "#E8442A", accent: g.brand?.accent || "#D6E04B", logo: g.brand?.logo_key }}
     coverUrl={galleryCoverThumb ? `/thumbs/preview/${galleryCoverThumb}` : null}
-    siteName={site.name} siteLogoUrl={site.logoUrl} />
+    siteName={site.name} siteLogoUrl={site.logoUrl} siteDisplayMode={site.displayMode} />
     </div>
   </>;
 }

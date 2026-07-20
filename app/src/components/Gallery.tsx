@@ -8,6 +8,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import SiteHeader from "@/components/SiteHeader";
+import type { DisplayMode } from "@/lib/siteIdentity";
 
 type Asset = { id: string; kind: "photo" | "video"; width: number; height: number; contributor_id: string; firstName: string; download_filename: string; download_url: string; thumb: string; preview: string };
 type Album = { id: string; name: string; slug: string; cover: string | null; count: number };
@@ -25,15 +26,14 @@ function onThumbError(e: React.SyntheticEvent<HTMLImageElement>) {
   img.src = THUMB_FALLBACK;
 }
 
-export default function Gallery({ gallerySlug, galleryName, eventDate, location, intro, albums, assetsByAlbum, contributors, brand, siteName, siteLogoUrl, coverUrl }: {
+export default function Gallery({ gallerySlug, galleryName, eventDate, location, intro, albums, assetsByAlbum, contributors, brand, siteName, siteLogoUrl, siteDisplayMode, coverUrl }: {
   gallerySlug: string; galleryName: string; eventDate: string; location: string; intro?: string;
   albums: Album[]; assetsByAlbum: Record<string, Asset[]>; contributors: { id: string; name: string; count: number }[];
   brand: { primary: string; accent: string; logo?: string };
-  siteName: string; siteLogoUrl: string | null; coverUrl?: string | null;
+  siteName: string; siteLogoUrl: string | null; siteDisplayMode?: DisplayMode; coverUrl?: string | null;
 }) {
   const single = albums.length === 1;
   const [openAlbum, setOpenAlbum] = useState<string | null>(single ? albums[0]?.id : null);
-  const [filter, setFilter] = useState<string | null>(null);
   const [lb, setLb] = useState<{ album: string; i: number } | null>(null);
   const style = { ["--brand" as any]: brand.primary, ["--accent" as any]: brand.accent } as React.CSSProperties;
 
@@ -78,7 +78,6 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
 
   const album = albums.find((a) => a.id === openAlbum) || null;
   const assets = openAlbum ? assetsByAlbum[openAlbum] || [] : [];
-  const shown = useMemo(() => (filter ? assets.filter((a) => a.contributor_id === filter) : assets), [assets, filter]);
   const lbList = lb ? assetsByAlbum[lb.album] || [] : [];
   const current = lb ? lbList[lb.i] : null;
 
@@ -122,7 +121,7 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
 
   return (
     <div className="min-h-screen" style={style}>
-      <SiteHeader siteName={siteName} logoUrl={siteLogoUrl} crumbs={crumbs} />
+      <SiteHeader siteName={siteName} logoUrl={siteLogoUrl} displayMode={siteDisplayMode} crumbs={crumbs} />
       {!album && (
         <header className="relative overflow-hidden border-b border-[var(--border)]">
           {coverUrl && <>
@@ -148,17 +147,11 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
           <div className="mx-auto max-w-7xl px-6 py-4">
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
-                {!single && <button onClick={() => { setOpenAlbum(null); setFilter(null); }} className="eyebrow mb-1 flex items-center gap-1.5 transition hover:text-[var(--text)]"><ArrowLeft size={12} /> All albums</button>}
+                {!single && <button onClick={() => setOpenAlbum(null)} className="eyebrow mb-1 flex items-center gap-1.5 transition hover:text-[var(--text)]"><ArrowLeft size={12} /> All albums</button>}
                 <h1 className="display truncate text-3xl sm:text-4xl">{album.name}</h1>
                 <p className="data mt-0.5 text-[var(--text-2)]">{album.count} photos</p>
               </div>
             </div>
-            {contributors.length > 1 && (
-              <div className="no-scrollbar mt-4 flex gap-2 overflow-x-auto pb-1">
-                <Chip active={!filter} onClick={() => setFilter(null)} label="Everyone" count={album.count} />
-                {contributors.map((c) => <Chip key={c.id} active={filter === c.id} onClick={() => setFilter(c.id)} label={c.name} count={c.count} />)}
-              </div>
-            )}
           </div>
         </header>
       )}
@@ -189,7 +182,7 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
 
         {album && (
           <div className="columns-2 gap-3 sm:columns-3 lg:columns-4 [&>*]:mb-3">
-            {shown.map((a) => (
+            {assets.map((a) => (
               <figure key={a.id} className={`group relative break-inside-avoid overflow-hidden rounded-[var(--radius)] bg-[var(--surface)] ${cart.has(a.id) ? "ring-2 ring-[var(--brand)]" : ""}`}>
                 <img src={a.thumb} alt="" loading="lazy" width={a.width} height={a.height} onError={onThumbError} onClick={() => setLb({ album: album.id, i: assets.indexOf(a) })} className="w-full cursor-zoom-in transition duration-300 group-hover:opacity-95" />
                 {a.kind === "video" && <div className="pointer-events-none absolute inset-0 grid place-items-center"><div className="rounded-full bg-black/50 p-3 backdrop-blur"><Play size={18} fill="white" /></div></div>}
@@ -201,7 +194,7 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
                 <figcaption className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-3 pb-2 pt-8 opacity-0 transition group-hover:opacity-100"><span className="data text-white/90"><span className="text-[var(--text-2)]">SHOT BY</span> {a.firstName}</span></figcaption>
               </figure>
             ))}
-            {!shown.length && <p className="data col-span-full py-24 text-center text-[var(--text-2)]">Nothing here yet.</p>}
+            {!assets.length && <p className="data col-span-full py-24 text-center text-[var(--text-2)]">Nothing here yet.</p>}
           </div>
         )}
       </main>
@@ -283,7 +276,4 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
       )}
     </div>
   );
-}
-function Chip({ active, onClick, label, count }: any) {
-  return <button onClick={onClick} className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition ${active ? "border-transparent bg-[var(--brand)] text-white" : "border-[var(--border)] text-[var(--text-2)] hover:text-[var(--text)]"}`}>{label}<span className="ml-1.5 opacity-70">{count}</span></button>;
 }

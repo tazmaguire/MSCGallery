@@ -15,7 +15,7 @@ export default async function Home() {
   } catch {}
   return (
     <div>
-      <SiteHeader siteName={site.name} logoUrl={site.logoUrl} />
+      <SiteHeader siteName={site.name} logoUrl={site.logoUrl} displayMode={site.displayMode} />
       <header className="border-b border-[var(--border)]"><div className="mx-auto max-w-4xl px-6 py-12"><div className="flex items-start justify-between"><h1 className="display text-4xl">Galleries</h1><ThemeToggle /></div></div></header>
       <div className="mx-auto max-w-4xl px-6 py-8">
         <div className="space-y-2">

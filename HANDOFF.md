@@ -125,6 +125,12 @@ app/                     Next.js 14 (App Router, TypeScript)
                          UsersManager, SiteSettingsForm
   src/lib/moderation.ts  single source of truth for pending-queue count/list/
                          galleries — every page reads through this, not its own query
+  src/lib/siteIdentity.ts pure display-mode logic (resolveSiteIdentity), split
+                         out of siteConfig.ts so client components can import
+                         it without pulling in db.ts (pg needs fs/net/tls/dns,
+                         which don't bundle for the browser) — client
+                         components needing this must import siteIdentity.ts
+                         directly, never siteConfig.ts
   src/middleware.ts      security headers (CSP scoped to self + R2)
   src/instrumentation.ts runs validateConfig() at boot
 worker/                  derive (sharp/ffmpeg/exiftool) + purge + detectTags
@@ -139,6 +145,9 @@ db/005_site_settings.sql single-row site_settings — global branding set from
                          /admin/settings (name/tagline/colours/theme/footer/
                          contact + uploaded logo/favicon, stored under the same
                          thumbs path as thumbnails, see below)
+db/006_site_display_mode.sql site_settings.display_mode — 'logo' | 'name' | 'both',
+                         how the site identity renders in AdminNav, the login
+                         page, and the public site header. Defaults to 'both'.
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -314,6 +323,13 @@ docker compose logs worker --tail 50
   `docker-entrypoint.sh` fixes ownership as root at container start, then
   drops to the `app` user before exec'ing the real process. Removing that
   reintroduces the `EACCES: mkdir '/app/public/thumbs/thumb'` outage.
+- **`siteConfig.ts` imports `db.ts` (pg) — never import it from a `"use client"`
+  component**, even for a type or a pure helper. Webpack bundles the whole
+  module graph for the browser, and `pg` needs Node-only builtins (`fs`,
+  `net`, `tls`, `dns`) that don't exist client-side, breaking `next build`
+  with "Module not found". Client components needing the logo/name
+  display-mode logic import `src/lib/siteIdentity.ts` instead — a
+  db-free module `siteConfig.ts` re-exports from for server-side callers.
 
 ---
 

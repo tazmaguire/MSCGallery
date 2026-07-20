@@ -1,15 +1,18 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
+import { resolveSiteIdentity, type DisplayMode } from "@/lib/siteIdentity";
 
 type Crumb = { label: string; href?: string };
 
 /** Slim persistent top bar: site logo/name linking home, plus an optional breadcrumb. */
-export default function SiteHeader({ siteName, logoUrl, crumbs = [] }: { siteName: string; logoUrl?: string | null; crumbs?: Crumb[] }) {
+export default function SiteHeader({ siteName, logoUrl, displayMode = "both", crumbs = [] }: { siteName: string; logoUrl?: string | null; displayMode?: DisplayMode; crumbs?: Crumb[] }) {
+  const { showLogo, showName } = resolveSiteIdentity(displayMode, logoUrl ?? null);
   return (
     <div className="border-b border-[var(--border)] bg-[var(--bg-2)]">
       <div className="mx-auto flex max-w-7xl items-center gap-2 overflow-x-auto px-4 py-2.5">
         <Link href="/" className="flex shrink-0 items-center gap-2">
-          {logoUrl ? <img src={logoUrl} alt={siteName} className="h-5 w-auto" /> : <span className="display text-sm">{siteName.toUpperCase()}</span>}
+          {showLogo && <img src={logoUrl!} alt={siteName} className="h-5 w-auto" />}
+          {showName && <span className="display text-sm">{siteName.toUpperCase()}</span>}
         </Link>
         {crumbs.length > 0 && (
           <nav className="data flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[var(--text-3)]">

@@ -13,11 +13,14 @@
  * (never at module load — same rule as storage.ts).
  */
 import { q } from "./db";
+import type { DisplayMode } from "./siteIdentity";
+export type { DisplayMode } from "./siteIdentity";
+export { resolveSiteIdentity } from "./siteIdentity";
 
 export type SiteConfig = {
   name: string; tagline: string; logoUrl: string | null; faviconUrl: string | null;
   primary: string; accent: string; theme: "light" | "dark" | null;
-  footerText: string; contactEmail: string;
+  footerText: string; contactEmail: string; displayMode: DisplayMode;
 };
 
 export async function siteConfig(): Promise<SiteConfig> {
@@ -31,6 +34,7 @@ export async function siteConfig(): Promise<SiteConfig> {
     theme: null,
     footerText: "",
     contactEmail: "",
+    displayMode: "both",
   };
   try {
     const [row] = await q<any>(`SELECT * FROM site_settings WHERE id=true`);
@@ -44,6 +48,7 @@ export async function siteConfig(): Promise<SiteConfig> {
       if (row.theme === "light" || row.theme === "dark") cfg.theme = row.theme;
       if (row.footer_text) cfg.footerText = row.footer_text;
       if (row.contact_email) cfg.contactEmail = row.contact_email;
+      if (row.display_mode === "logo" || row.display_mode === "name" || row.display_mode === "both") cfg.displayMode = row.display_mode;
     }
   } catch { /* db/005_site_settings.sql not applied yet, or DB unreachable at this call site — fall back to env/defaults */ }
   return cfg;

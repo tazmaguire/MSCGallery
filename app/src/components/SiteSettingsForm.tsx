@@ -10,6 +10,7 @@ export default function SiteSettingsForm({ initial }: { initial: any }) {
   const [theme, setTheme] = useState(initial?.theme || "");
   const [footerText, setFooterText] = useState(initial?.footer_text || "");
   const [contactEmail, setContactEmail] = useState(initial?.contact_email || "");
+  const [displayMode, setDisplayMode] = useState(initial?.display_mode || "both");
   const [logoUrl, setLogoUrl] = useState(initial?.logo_key ? `/thumbs/${initial.logo_key}` : "");
   const [faviconUrl, setFaviconUrl] = useState(initial?.favicon_key ? `/thumbs/${initial.favicon_key}` : "");
   const [err, setErr] = useState(""); const [ok, setOk] = useState(""); const [busy, setBusy] = useState(false);
@@ -32,7 +33,7 @@ export default function SiteSettingsForm({ initial }: { initial: any }) {
     setErr(""); setOk(""); setBusy(true);
     try {
       const r = await fetch("/api/admin/settings", { method: "PATCH", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, tagline, primary_color: primary, accent_color: accent, theme: theme || null, footer_text: footerText, contact_email: contactEmail }) });
+        body: JSON.stringify({ name, tagline, primary_color: primary, accent_color: accent, theme: theme || null, footer_text: footerText, contact_email: contactEmail, display_mode: displayMode }) });
       const d = await r.json();
       if (!r.ok) { setErr(d.error || "Couldn't save changes."); return; }
       setOk("Saved. Refresh to see it everywhere.");
@@ -76,6 +77,15 @@ export default function SiteSettingsForm({ initial }: { initial: any }) {
             </button>
             <input ref={faviconRef} type="file" accept="image/png,image/webp,image/x-icon,image/svg+xml" className="hidden" onChange={e => e.target.files?.[0] && upload("favicon", e.target.files[0])} />
           </div>
+        </div>
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Header display</label>
+          <select value={displayMode} onChange={e => setDisplayMode(e.target.value)} className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none">
+            <option value="both">Logo + site name</option>
+            <option value="logo">Logo only</option>
+            <option value="name">Site name only</option>
+          </select>
+          <p className="data mt-1.5 text-[var(--text-3)]">Controls the admin nav, login page, and public site header. If no logo is uploaded, the name always shows.</p>
         </div>
       </div>
 

@@ -1,16 +1,18 @@
 "use client";
 /** Admin gallery manager: albums, add pro photos, three link modes + QR, move, edit, delete, branding. */
 import { useState, useEffect, useCallback, useRef } from "react";
-import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star } from "lucide-react";
+import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star, Tag, Search } from "lucide-react";
 import { DISPLAY_FONTS, BODY_FONTS, MONO_FONTS } from "@/lib/fonts";
 
 export default function GalleryManager({ gallery, isOwner }: { gallery: any; isOwner: boolean }) {
   const [albums, setAlbums] = useState<any[]>([]); const [active, setActive] = useState<string | null>(null);
   const [assets, setAssets] = useState<any[]>([]); const [sel, setSel] = useState<Set<string>>(new Set());
   const [links, setLinks] = useState<any[]>([]);
-  const [panel, setPanel] = useState<null | "links" | "newAlbum" | "brand" | "qr" | "editCredit" | "access">(null);
+  const [panel, setPanel] = useState<null | "links" | "newAlbum" | "brand" | "qr" | "editCredit" | "access" | "tags">(null);
   const [qrToken, setQrToken] = useState<string>("");
   const [uploading, setUploading] = useState(false);
+  const [bibSearch, setBibSearch] = useState("");
+  const [bibResults, setBibResults] = useState<any[] | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const style = { ["--brand" as any]: gallery.brand?.primary || "#E8442A" } as React.CSSProperties;
 
@@ -42,18 +44,49 @@ export default function GalleryManager({ gallery, isOwner }: { gallery: any; isO
     if (kind === "gallery") await fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: gallery.id, cover_asset_id: assetId }) });
     else await fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: active, cover_asset_id: assetId }) });
   };
+  const runBibSearch = async () => {
+    if (!bibSearch.trim()) { setBibResults(null); return; }
+    const r = await fetch(`/api/admin/tags?gallery=${gallery.id}&value=${encodeURIComponent(bibSearch.trim())}`);
+    const d = await r.json();
+    setBibResults(r.ok ? d.assets : []);
+  };
+  const clearBibSearch = () => { setBibSearch(""); setBibResults(null); };
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6" style={style}>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div><h1 className="display text-3xl">{gallery.name}</h1><p className="data text-[var(--text-2)]">{gallery.short_code} · /g/{gallery.slug}</p></div>
         <div className="flex flex-wrap gap-2">
+          <div className="flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-2.5">
+            <Search size={14} className="text-[var(--text-3)]" />
+            <input value={bibSearch} onChange={e => setBibSearch(e.target.value)} onKeyDown={e => e.key === "Enter" && runBibSearch()} placeholder="Bib number" className="w-28 bg-transparent py-2 text-sm outline-none" />
+            {bibResults !== null && <button onClick={clearBibSearch} className="text-[var(--text-3)] hover:text-[var(--text)]"><X size={13} /></button>}
+          </div>
           <button onClick={() => setPanel("links")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Link2 size={15} />Upload links</button>
           <button onClick={() => setPanel("brand")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Palette size={15} />Branding</button>
           <button onClick={() => setPanel("access")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm">{gallery.view_password_hash ? <Lock size={15} /> : <KeyRound size={15} />}Access</button>
           <a href={`/g/${gallery.slug}`} target="_blank" className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Eye size={15} />View</a>
         </div>
       </div>
+
+      {bibResults !== null ? (
+        <div className="mb-6">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="data text-[var(--text-2)]">{bibResults.length} {bibResults.length === 1 ? "photo" : "photos"} tagged "{bibSearch}"</p>
+            <button onClick={clearBibSearch} className="btn-ghost px-2.5 py-1.5 text-xs">Clear search</button>
+          </div>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
+            {bibResults.map(a => (
+              <div key={a.id} className="relative overflow-hidden rounded-[var(--radius)] border border-[var(--border)]">
+                <img src={a.thumb_key ? `/thumbs/thumb/${a.thumb_key}` : ""} alt="" loading="lazy" className="aspect-square w-full bg-[var(--surface)] object-cover" />
+                {a.visibility === "pending" && <span className="data absolute left-1 top-1 rounded bg-[var(--accent)]/80 px-1 font-bold text-[var(--bg)]">PENDING</span>}
+                <div className="data truncate px-1 py-0.5 text-[var(--text-3)]">{a.first_name || a.contributor}</div>
+              </div>
+            ))}
+            {!bibResults.length && <p className="data col-span-full py-16 text-center text-[var(--text-2)]">No photos tagged with that bib number.</p>}
+          </div>
+        </div>
+      ) : <>
       <div className="mb-4 flex flex-wrap gap-2">
         {albums.map(al => (
           <button key={al.id} onClick={() => setActive(al.id)} className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${active === al.id ? "bg-[var(--text)] text-[var(--bg)]" : "border border-[var(--border)] text-[var(--text-2)]"}`}>
@@ -95,6 +128,7 @@ export default function GalleryManager({ gallery, isOwner }: { gallery: any; isO
                 <button onClick={() => setCover([...sel][0], "album")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs" title="Use as this album's cover"><Star size={12} />Album cover</button>
                 <button onClick={() => setCover([...sel][0], "gallery")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs" title="Use as this gallery's cover"><Star size={12} />Gallery cover</button>
                 <button onClick={() => setPanel("editCredit")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Pencil size={12} />Edit credit</button>
+                <button onClick={() => setPanel("tags")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Tag size={12} />Tags</button>
               </>}
               <span className="data text-[var(--text-2)]">Move to</span>
               {albums.filter(al => al.id !== active).map(al => <button key={al.id} onClick={() => move(al.id)} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Move size={12} />{al.name}</button>)}
@@ -103,6 +137,7 @@ export default function GalleryManager({ gallery, isOwner }: { gallery: any; isO
           </div>
         </div>
       )}
+      </>}
 
       {panel === "links" && <LinksPanel gallery={gallery} albums={albums} links={links} onClose={() => setPanel(null)} reload={loadLinks} showQr={(t) => { setQrToken(t); setPanel("qr"); }} />}
       {panel === "qr" && <QRModal gallery={gallery} token={qrToken} onClose={() => setPanel("links")} />}
@@ -110,6 +145,7 @@ export default function GalleryManager({ gallery, isOwner }: { gallery: any; isO
       {panel === "brand" && <BrandModal gallery={gallery} onClose={() => setPanel(null)} />}
       {panel === "access" && <AccessModal gallery={gallery} onClose={() => setPanel(null)} />}
       {panel === "editCredit" && <EditCreditModal current={assets.find(a => a.id === [...sel][0])} onClose={() => setPanel(null)} onDone={() => { setPanel(null); setSel(new Set()); loadAssets(); }} assetIds={[...sel]} />}
+      {panel === "tags" && <TagsModal assetId={[...sel][0]} onClose={() => setPanel(null)} />}
     </div>
   );
 }
@@ -203,6 +239,40 @@ function AccessModal({ gallery, onClose }: any) {
       </>}
       {err && <p className="data mb-3 text-[var(--brand)]">{err}</p>}
       <button onClick={save} disabled={busy || (protectedNow && !gallery.view_password_hash && !password)} className="btn-primary w-full py-2.5 disabled:opacity-30">{busy ? "Saving…" : "Save"}</button>
+    </Modal>
+  );
+}
+function TagsModal({ assetId, onClose }: any) {
+  const [tags, setTags] = useState<any[]>([]); const [value, setValue] = useState(""); const [err, setErr] = useState(""); const [loading, setLoading] = useState(true);
+  const load = () => fetch(`/api/admin/tags?asset=${assetId}`).then(r => r.json()).then(d => { setTags(d.tags || []); setLoading(false); });
+  useEffect(() => { load(); }, []);
+  const add = async () => {
+    if (!value.trim()) return;
+    setErr("");
+    const r = await fetch("/api/admin/tags", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId, tagType: "bib", value }) });
+    if (!r.ok) { setErr((await r.json().catch(() => ({}))).error || "Couldn't add tag."); return; }
+    setValue(""); load();
+  };
+  const remove = async (id: string) => { await fetch("/api/admin/tags", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) }); load(); };
+  return (
+    <Modal title="Bib tags" onClose={onClose}>
+      <p className="data mb-3 text-[var(--text-3)]">Tag this photo with a race bib number so participants can search for it.</p>
+      {loading ? <Loader2 size={18} className="mx-auto my-4 animate-spin text-[var(--text-3)]" /> : (
+        <div className="mb-4 space-y-1.5">
+          {tags.map(t => (
+            <div key={t.id} className="flex items-center justify-between rounded-[var(--radius)] bg-[var(--bg-2)] px-3 py-2 text-sm">
+              <span className="flex items-center gap-1.5"><Tag size={13} className="text-[var(--text-3)]" />{t.value}<span className="data text-[var(--text-3)]">{t.tag_type}</span></span>
+              <button onClick={() => remove(t.id)} className="text-[var(--text-2)] hover:text-[var(--brand)]"><Trash2 size={14} /></button>
+            </div>
+          ))}
+          {!tags.length && <p className="data text-[var(--text-3)]">No tags yet.</p>}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <input value={value} onChange={e => setValue(e.target.value)} onKeyDown={e => e.key === "Enter" && add()} placeholder="Bib number" className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
+        <button onClick={add} disabled={!value.trim()} className="btn-primary shrink-0 px-4 disabled:opacity-30">Add</button>
+      </div>
+      {err && <p className="data mt-2 text-[var(--brand)]">{err}</p>}
     </Modal>
   );
 }

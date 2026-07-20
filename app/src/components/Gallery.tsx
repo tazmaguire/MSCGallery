@@ -5,7 +5,7 @@
  * covers → photos. Downloads at photo / album / gallery. "Shot by Sarah".
  */
 import { useState, useMemo, useEffect, useRef } from "react";
-import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2 } from "lucide-react";
+import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2, Search } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import SiteHeader from "@/components/SiteHeader";
 
@@ -43,10 +43,25 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
   const clearCart = () => persistCart(new Set());
   const cartDownloadUrl = `/g/${gallerySlug}/download?${[...cart].map((id) => `id=${id}`).join("&")}`;
 
+  // Bib-number search — proves the tagging retrieval path end to end.
+  const [bibQuery, setBibQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<Asset[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const runSearch = async () => {
+    if (!bibQuery.trim()) { setSearchResults(null); return; }
+    setSearching(true);
+    try {
+      const r = await fetch(`/api/gallery/${gallerySlug}/search?bib=${encodeURIComponent(bibQuery.trim())}`);
+      const d = await r.json();
+      setSearchResults(r.ok ? d.assets : []);
+    } finally { setSearching(false); }
+  };
+  const clearSearch = () => { setBibQuery(""); setSearchResults(null); };
+
   const album = albums.find((a) => a.id === openAlbum) || null;
   const assets = openAlbum ? assetsByAlbum[openAlbum] || [] : [];
   const shown = useMemo(() => (filter ? assets.filter((a) => a.contributor_id === filter) : assets), [assets, filter]);
-  const lbList = lb ? assetsByAlbum[lb.album] || [] : [];
+  const lbList = lb ? (lb.album === "__search__" ? searchResults || [] : assetsByAlbum[lb.album] || []) : [];
   const current = lb ? lbList[lb.i] : null;
 
   useEffect(() => {
@@ -134,10 +149,35 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
       <main className="mx-auto max-w-7xl px-6 py-8">
         {!album && (
           <>
-            <div className="mb-6 flex items-center justify-between">
-              <div className="eyebrow">Albums</div>
-              <a href={`/g/${gallerySlug}/download`} className="btn-ghost flex items-center gap-2 px-4 py-2 text-sm"><Download size={15} /> Download everything</a>
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+              <div className="eyebrow">{searchResults !== null ? "Search" : "Albums"}</div>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-2.5">
+                  <Search size={14} className="text-[var(--text-3)]" />
+                  <input value={bibQuery} onChange={(e) => setBibQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && runSearch()} placeholder="Find your bib number" className="w-36 bg-transparent py-2 text-sm outline-none sm:w-44" />
+                  {searchResults !== null && <button onClick={clearSearch} className="text-[var(--text-3)] transition hover:text-[var(--text)]"><X size={13} /></button>}
+                </div>
+                {searchResults === null && <a href={`/g/${gallerySlug}/download`} className="btn-ghost flex items-center gap-2 px-4 py-2 text-sm"><Download size={15} /> <span className="hidden sm:inline">Download everything</span></a>}
+              </div>
             </div>
+
+            {searchResults !== null ? (
+              <div className="columns-2 gap-3 sm:columns-3 lg:columns-4 [&>*]:mb-3">
+                {searchResults.map((a) => (
+                  <figure key={a.id} className={`group relative break-inside-avoid overflow-hidden rounded-[var(--radius)] bg-[var(--surface)] ${cart.has(a.id) ? "ring-2 ring-[var(--brand)]" : ""}`}>
+                    <img src={a.thumb} alt="" loading="lazy" width={a.width} height={a.height} onClick={() => setLb({ album: "__search__", i: searchResults.indexOf(a) })} className="w-full cursor-zoom-in transition duration-300 group-hover:opacity-95" />
+                    {a.kind === "video" && <div className="pointer-events-none absolute inset-0 grid place-items-center"><div className="rounded-full bg-black/50 p-3 backdrop-blur"><Play size={18} fill="white" /></div></div>}
+                    <button onClick={(e) => { e.stopPropagation(); toggleCart(a.id); }} title={cart.has(a.id) ? "Remove from cart" : "Add to cart"}
+                      className={`absolute left-2 top-2 grid h-8 w-8 place-items-center rounded-full backdrop-blur transition focus:opacity-100 ${cart.has(a.id) ? "bg-[var(--brand)] text-white opacity-100" : "bg-black/40 text-white/90 opacity-0 group-hover:opacity-100"}`}>
+                      {cart.has(a.id) ? <Check size={15} /> : <ShoppingCart size={15} />}
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); dl(a.download_url, a.download_filename); }} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/40 text-white/90 opacity-0 backdrop-blur transition group-hover:opacity-100 focus:opacity-100" title="Download"><Download size={15} /></button>
+                    <figcaption className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-3 pb-2 pt-8 opacity-0 transition group-hover:opacity-100"><span className="data text-white/90"><span className="text-[var(--text-2)]">SHOT BY</span> {a.firstName}</span></figcaption>
+                  </figure>
+                ))}
+                {!searching && !searchResults.length && <p className="data col-span-full py-24 text-center text-[var(--text-2)]">No photos found for bib "{bibQuery}".</p>}
+              </div>
+            ) : (
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {albums.map((al) => (
                 <button key={al.id} onClick={() => setOpenAlbum(al.id)} className="group text-left">
@@ -152,6 +192,7 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
                 </button>
               ))}
             </div>
+            )}
           </>
         )}
 

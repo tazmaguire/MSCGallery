@@ -108,17 +108,26 @@ app/                     Next.js 14 (App Router, TypeScript)
     admin/               list, gallery manager, moderation queue, login,
                          account (self-service), users (owner-only)
     api/                 upload/presign (THE security boundary), admin/*, auth,
-                         gallery/unlock (gallery password check)
-  src/components/        Gallery (+ cart, breadcrumb), Uploader (stage → submit),
-                         ModerationQueue, GalleryManager (+ delete/edit/cover),
-                         ThemeToggle, AdminNav, GalleryList, SiteHeader,
-                         GalleryPasswordGate, AccountForm, UsersManager
+                         gallery/unlock (gallery password check),
+                         gallery/[slug]/search (public bib-number search)
+  src/components/        Gallery (+ cart, breadcrumb, bib search), Uploader
+                         (stage → submit → confirmation), ModerationQueue
+                         (+ gallery filter tabs), GalleryManager (+ delete/
+                         edit/cover/tags/bib search), ThemeToggle, AdminNav,
+                         GalleryList, SiteHeader, GalleryPasswordGate,
+                         AccountForm, UsersManager
+  src/lib/moderation.ts  single source of truth for pending-queue count/list/
+                         galleries — every page reads through this, not its own query
   src/middleware.ts      security headers (CSP scoped to self + R2)
   src/instrumentation.ts runs validateConfig() at boot
-worker/                  derive (sharp/ffmpeg/exiftool) + purge; reads/writes R2
+worker/                  derive (sharp/ffmpeg/exiftool) + purge + detectTags
+                         stub (see db/003_tagging.sql); reads/writes R2
 db/001_schema.sql        11 tables. gallery→album→asset; 3 link modes; security tables
-db/002_customisation.sql gallery cover_asset_id + view_password_hash — NOT auto-applied
-                         to an existing DB, see "Database migrations" below
+db/002_customisation.sql gallery cover_asset_id + view_password_hash
+db/003_tagging.sql       asset_tags, participants stub, assets.tag_status —
+                         bib/face-tagging foundation, no ML in this round
+                         (all NOT auto-applied to an existing DB, see
+                         "Database migrations" below)
 deploy/
   docker-compose.yml     db + app(:8090) + worker. No Caddy.
   env.example            copy to .env, fill in

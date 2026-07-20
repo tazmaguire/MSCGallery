@@ -172,7 +172,23 @@ async function derive(a, dir) {
        thumb_key=$7, preview_key=$8, poster_key=$9, public_key=$10, error=NULL WHERE id=$1`,
     [a.id, m.checksum, m.width ?? null, m.height ?? null, m.duration_s ?? null, m.taken_at ?? null,
      m.thumb_key ?? null, m.preview_key ?? null, m.poster_key ?? null, m.public_key]);
+  await detectTags(a);
   log(`derived ${a.kind} ${a.id}`);
+}
+
+/**
+ * Tagging stub (db/003_tagging.sql) — the single insertion point a future
+ * OCR (race bib) or face-match model plugs into. Runs once per asset right
+ * after derive() finishes, i.e. once thumb/preview/public deliverables exist
+ * to run detection against. Today it does no detection at all: it just marks
+ * the asset 'skipped' so a future detection worker can find everything that
+ * still needs a real pass (`WHERE tag_status='pending'` never accumulates
+ * unprocessed backlog it doesn't know about). Swap the body for a real model
+ * call and write results with `INSERT INTO asset_tags (..., source='auto')`.
+ */
+async function detectTags(a) {
+  try { await db.query(`UPDATE assets SET tag_status='skipped' WHERE id=$1`, [a.id]); }
+  catch { /* db/003_tagging.sql not applied yet — no tag_status column, harmless no-op */ }
 }
 
 async function purge(a) {

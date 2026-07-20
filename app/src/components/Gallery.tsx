@@ -4,7 +4,7 @@
  * type, race-timing mono for data. Photos are the hero. Two levels: album
  * covers → photos. Downloads at photo / album / gallery. "Shot by Sarah".
  */
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import SiteHeader from "@/components/SiteHeader";
@@ -58,6 +58,27 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
     };
     window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
   }, [lb, lbList.length]);
+
+  // Preload neighbours (2048px preview, never the full-res original) so paging feels instant.
+  useEffect(() => {
+    if (!lb) return;
+    for (const idx of [lb.i - 1, lb.i + 1]) {
+      const item = lbList[idx];
+      if (item && item.kind === "photo") { const img = new window.Image(); img.src = item.preview; }
+    }
+  }, [lb, lbList]);
+
+  // Swipe left/right on touch devices.
+  const touchStartX = useRef<number | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => { touchStartX.current = e.touches[0].clientX; };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null || !lb) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    touchStartX.current = null;
+    if (Math.abs(dx) < 50) return;
+    if (dx < 0 && lb.i < lbList.length - 1) setLb({ ...lb, i: lb.i + 1 });
+    if (dx > 0 && lb.i > 0) setLb({ ...lb, i: lb.i - 1 });
+  };
 
   const dl = (url: string, name: string) => { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); };
   const totalPhotos = Object.values(assetsByAlbum).reduce((n, a) => n + a.length, 0);
@@ -159,7 +180,7 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
             <span className="data text-white/60">{lb!.i + 1} / {lbList.length}</span>
             <button onClick={() => setLb(null)} className="p-2 text-white/60 transition hover:text-white"><X size={22} /></button>
           </div>
-          <div className="relative flex flex-1 items-center justify-center px-4">
+          <div className="relative flex flex-1 items-center justify-center px-4" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
             {lb!.i > 0 && <button onClick={() => setLb({ ...lb!, i: lb!.i - 1 })} className="absolute left-2 z-10 rounded-full bg-white/10 p-2 transition hover:bg-white/20"><ChevronLeft size={24} /></button>}
             {current.kind === "video" ? <video src={current.download_url} controls autoPlay className="max-h-[72vh] max-w-full" /> : <img src={current.preview} alt="" draggable={false} className="max-h-[72vh] max-w-full select-none object-contain" />}
             {lb!.i < lbList.length - 1 && <button onClick={() => setLb({ ...lb!, i: lb!.i + 1 })} className="absolute right-2 z-10 rounded-full bg-white/10 p-2 transition hover:bg-white/20"><ChevronRight size={24} /></button>}

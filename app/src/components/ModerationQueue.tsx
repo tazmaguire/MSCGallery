@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { Check, X, Loader2, Undo2, ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -26,6 +26,17 @@ export default function ModerationQueue({ initial, galleries, activeGallery }: {
       if (e.key === "ArrowRight") setI((n) => Math.min(n + 1, queue.length - 1)); if (e.key === "ArrowLeft") setI((n) => Math.max(n - 1, 0));
     }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
   }, [act, queue.length]);
+
+  const touchStartX = useRef<number | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => { touchStartX.current = e.touches[0].clientX; };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    touchStartX.current = null;
+    if (Math.abs(dx) < 50) return;
+    if (dx < 0) setI((n) => Math.min(n + 1, queue.length - 1));
+    if (dx > 0) setI((n) => Math.max(n - 1, 0));
+  };
 
   const tabs = galleries.length > 1 && (
     <div className="no-scrollbar mb-3 flex gap-1.5 overflow-x-auto">
@@ -54,7 +65,7 @@ export default function ModerationQueue({ initial, galleries, activeGallery }: {
         <div><h1 className="display text-2xl">Moderation</h1><p className="data text-[var(--text-2)]">{queue.length} waiting · {i + 1} of {queue.length}</p></div>
         <div className="data hidden text-[var(--text-3)] sm:block"><kbd className="rounded bg-white/10 px-1.5 py-0.5">A</kbd> approve · <kbd className="rounded bg-white/10 px-1.5 py-0.5">R</kbd> reject</div>
       </div>
-      <div className="relative flex flex-1 items-center justify-center rounded-[var(--radius)] bg-[var(--surface)]">
+      <div className="relative flex flex-1 items-center justify-center rounded-[var(--radius)] bg-[var(--surface)]" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         <img src={current.preview || current.thumb} alt="" className="max-h-[55vh] w-full object-contain" />
         {i > 0 && <button onClick={() => setI(i - 1)} className="absolute left-2 rounded-full bg-black/50 p-2 backdrop-blur"><ChevronLeft size={20} /></button>}
         {i < queue.length - 1 && <button onClick={() => setI(i + 1)} className="absolute right-2 rounded-full bg-black/50 p-2 backdrop-blur"><ChevronRight size={20} /></button>}

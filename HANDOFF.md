@@ -179,6 +179,14 @@ docker compose exec app node scripts/seed.mjs "email" "Name" "password-12+chars"
 ```
 (An account was seeded during setup with placeholder creds — **replace it**.)
 
+**Removing the placeholder account:** `/admin/users` (owner-only) lists every
+admin user and can create/delete them — no shell access needed after the
+first login. To retire the seeded placeholder: log in as it once, go to Users
+→ New user, create your real owner account, log out, log back in as the real
+account, then Users → Remove on the placeholder. (You can't delete your own
+account while logged in as it, and the last remaining owner can't be deleted
+at all — both guard against locking yourself out.)
+
 Logs:
 ```
 docker compose logs app --tail 50

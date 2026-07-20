@@ -1,11 +1,15 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { Check, X, Loader2, Undo2, ChevronLeft, ChevronRight } from "lucide-react";
 
-export default function ModerationQueue({ initial }: { initial: any[] }) {
+type GalleryTab = { id: string; name: string; n: number };
+
+export default function ModerationQueue({ initial, galleries, activeGallery }: { initial: any[]; galleries: GalleryTab[]; activeGallery: string | null }) {
   const [queue, setQueue] = useState(initial);
   const [i, setI] = useState(0); const [busy, setBusy] = useState(false); const [undo, setUndo] = useState<any>(null);
   const current = queue[i];
+  const total = galleries.reduce((s, g) => s + g.n, 0);
   const act = useCallback(async (action: "approve" | "reject") => {
     if (!current || busy) return; setBusy(true); const asset = current;
     setQueue((q) => q.filter((a) => a.id !== asset.id)); setI((n) => Math.min(n, queue.length - 2));
@@ -23,14 +27,29 @@ export default function ModerationQueue({ initial }: { initial: any[] }) {
     }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
   }, [act, queue.length]);
 
+  const tabs = galleries.length > 1 && (
+    <div className="no-scrollbar mb-3 flex gap-1.5 overflow-x-auto">
+      <Link href="/admin/queue" className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition ${!activeGallery ? "border-transparent bg-[var(--text)] text-[var(--bg)]" : "border-[var(--border)] text-[var(--text-2)] hover:text-[var(--text)]"}`}>
+        All<span className="ml-1.5 opacity-70">{total}</span>
+      </Link>
+      {galleries.map((g) => (
+        <Link key={g.id} href={`/admin/queue?gallery=${g.id}`} className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition ${activeGallery === g.id ? "border-transparent bg-[var(--text)] text-[var(--bg)]" : "border-[var(--border)] text-[var(--text-2)] hover:text-[var(--text)]"}`}>
+          {g.name}<span className="ml-1.5 opacity-70">{g.n}</span>
+        </Link>
+      ))}
+    </div>
+  );
+
   if (!queue.length) return (
-    <div className="grid min-h-[70vh] place-items-center px-4 text-center">
-      <div><Check size={40} className="mx-auto mb-4 text-emerald-400" /><h2 className="display text-2xl">Queue is clear</h2><p className="data mt-1 text-[var(--text-2)]">Nothing waiting.</p></div>
+    <div className="mx-auto flex min-h-[70vh] max-w-3xl flex-col justify-center px-4 text-center">
+      {tabs}
+      <div><Check size={40} className="mx-auto mb-4 text-emerald-400" /><h2 className="display text-2xl">Queue is clear</h2><p className="data mt-1 text-[var(--text-2)]">Nothing waiting{activeGallery ? " for this event" : ""}.</p></div>
       {undo && <UndoBar undo={undo} onUndo={undoLast} />}
     </div>
   );
   return (
     <div className="mx-auto flex min-h-screen max-w-3xl flex-col px-4 py-4">
+      {tabs}
       <div className="mb-3 flex items-center justify-between">
         <div><h1 className="display text-2xl">Moderation</h1><p className="data text-[var(--text-2)]">{queue.length} waiting · {i + 1} of {queue.length}</p></div>
         <div className="data hidden text-[var(--text-3)] sm:block"><kbd className="rounded bg-white/10 px-1.5 py-0.5">A</kbd> approve · <kbd className="rounded bg-white/10 px-1.5 py-0.5">R</kbd> reject</div>
@@ -39,10 +58,14 @@ export default function ModerationQueue({ initial }: { initial: any[] }) {
         <img src={current.preview || current.thumb} alt="" className="max-h-[55vh] w-full object-contain" />
         {i > 0 && <button onClick={() => setI(i - 1)} className="absolute left-2 rounded-full bg-black/50 p-2 backdrop-blur"><ChevronLeft size={20} /></button>}
         {i < queue.length - 1 && <button onClick={() => setI(i + 1)} className="absolute right-2 rounded-full bg-black/50 p-2 backdrop-blur"><ChevronRight size={20} /></button>}
-        <div className="absolute left-3 top-3"><span className="data rounded-full bg-[var(--accent)]/20 px-2.5 py-1 font-bold text-[var(--accent)] backdrop-blur">GUEST UPLOAD</span></div>
+        <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
+          <span className="data rounded-full bg-[var(--accent)]/20 px-2.5 py-1 font-bold text-[var(--accent)] backdrop-blur">GUEST UPLOAD</span>
+          {current.gallery_name && <span className="data rounded-full bg-black/50 px-2.5 py-1 font-bold text-white/90 backdrop-blur">{current.gallery_name}</span>}
+        </div>
       </div>
       <div className="data mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[var(--text-2)]">
-        <span className="text-[var(--text)]">SHOT BY {current.first_name || current.contributor_name}</span>
+        <span className="text-[var(--text)]">SHOT BY {current.first_name || current.contributor_name || "Unknown"}</span>
+        {current.album_name && <span>{current.album_name}</span>}
         <span>{current.width} × {current.height}</span><span>{(current.bytes / 1e6).toFixed(1)}MB</span>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-3 pb-4">

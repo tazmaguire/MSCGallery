@@ -20,6 +20,17 @@ export async function pendingCount(galleryId?: string): Promise<number> {
   return row?.n ?? 0;
 }
 
+/** Distinct galleries currently represented in the queue, with their own pending count — powers the queue's gallery filter tabs. */
+export async function pendingGalleries() {
+  return q<{ id: string; name: string; n: number }>(
+    `SELECT g.id, g.name, count(*)::int AS n
+     FROM assets a JOIN galleries g ON g.id = a.gallery_id
+     WHERE ${PENDING_WHERE}
+     GROUP BY g.id, g.name
+     ORDER BY g.name`
+  );
+}
+
 export async function pendingQueue(galleryId?: string) {
   return q(
     `SELECT a.id, a.kind, a.width, a.height, a.bytes, a.thumb_key, a.preview_key, a.poster_key,

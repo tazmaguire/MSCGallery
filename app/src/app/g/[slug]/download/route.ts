@@ -26,10 +26,18 @@ import { PassThrough } from "node:stream";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // long downloads are fine
 
+// Cart zips stream through the VPS (unlike single-photo downloads, which go
+// straight to R2), so a cap here is what stops someone crafting a giant
+// ?id=...&id=...&id=... request from tying up a worker thread. The client
+// enforces the same cap for UX (a friendly message before it gets this far)
+// — this is the real, unbypassable boundary.
+const MAX_CART_IDS = 300;
+
 export async function GET(req: NextRequest, { params }: { params: { slug: string } }) {
   const url = new URL(req.url);
   const albumSlug = url.searchParams.get("album"); // optional; absent = whole gallery
   const ids = url.searchParams.getAll("id"); // optional; a cart selection — overrides album
+  if (ids.length > MAX_CART_IDS) return new Response(`Too many photos in one download (max ${MAX_CART_IDS}).`, { status: 400 });
 
   const [gallery] = await q(
     `SELECT * FROM galleries WHERE slug=$1 AND is_published`,

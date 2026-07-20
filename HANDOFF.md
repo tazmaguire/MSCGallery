@@ -126,6 +126,8 @@ db/001_schema.sql        11 tables. gallery→album→asset; 3 link modes; secur
 db/002_customisation.sql gallery cover_asset_id + view_password_hash
 db/003_tagging.sql       asset_tags, participants stub, assets.tag_status —
                          bib/face-tagging foundation, no ML in this round
+db/004_orders_stub.sql   orders + order_items — unused schema stub for a future
+                         paid flow; the cart itself is client-side, download-only
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -193,6 +195,10 @@ audit):
       and `d/[id]`) all additionally require `checkGalleryAccess` when
       `view_password_hash` is set — checked independently of the visibility
       rule, not a substitute for it.
+- [x] `api/gallery/[slug]/search/route.ts` (public bib search, added with H)
+      — full rule inline, plus the same `checkGalleryAccess` password check;
+      degrades to an empty result set (not an error) if `db/003_tagging.sql`
+      isn't applied yet.
 - Admin routes (`api/admin/*`, `/admin/*`) are intentionally exempt — they
   require `getUser()` and are where pending/private content is *supposed* to
   be visible to logged-in staff.

@@ -26,8 +26,13 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
 
   // Cart — pick individual photos across albums, download just those later.
   // Lives in localStorage, scoped to this gallery, so it survives a refresh.
+  // Download-only: no payment, no server-side cart state (see db/004_orders_stub.sql
+  // for where a future paid flow would attach — unused today).
+  const CART_MAX = 200;
   const cartKey = `cart:${gallerySlug}`;
   const [cart, setCart] = useState<Set<string>>(new Set());
+  const [cartOpen, setCartOpen] = useState(false);
+  const [cartMsg, setCartMsg] = useState("");
   useEffect(() => {
     try { setCart(new Set(JSON.parse(localStorage.getItem(cartKey) || "[]"))); } catch {}
   }, [cartKey]);
@@ -37,7 +42,11 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
   };
   const toggleCart = (id: string) => {
     const next = new Set(cart);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) { next.delete(id); }
+    else {
+      if (next.size >= CART_MAX) { setCartMsg(`You can add up to ${CART_MAX} photos to your cart at once — download this batch first.`); setTimeout(() => setCartMsg(""), 5000); return; }
+      next.add(id);
+    }
     persistCart(next);
   };
   const clearCart = () => persistCart(new Set());
@@ -57,6 +66,16 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
     } finally { setSearching(false); }
   };
   const clearSearch = () => { setBibQuery(""); setSearchResults(null); };
+
+  // Cart items can come from any album (or a search), so resolve against
+  // everything currently loaded, not just the open album.
+  const allAssetsById = useMemo(() => {
+    const m = new Map<string, Asset>();
+    for (const list of Object.values(assetsByAlbum)) for (const a of list) m.set(a.id, a);
+    if (searchResults) for (const a of searchResults) m.set(a.id, a);
+    return m;
+  }, [assetsByAlbum, searchResults]);
+  const cartItems = [...cart].map((id) => allAssetsById.get(id)).filter(Boolean) as Asset[];
 
   const album = albums.find((a) => a.id === openAlbum) || null;
   const assets = openAlbum ? assetsByAlbum[openAlbum] || [] : [];
@@ -244,12 +263,46 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
         </div>
       )}
 
-      {cart.size > 0 && (
-        <div className="fixed inset-x-4 bottom-4 z-40 mx-auto flex max-w-sm items-center justify-between gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-2xl">
-          <span className="flex items-center gap-2 text-sm font-medium"><ShoppingCart size={16} /> {cart.size} {cart.size === 1 ? "photo" : "photos"} selected</span>
-          <div className="flex items-center gap-2">
-            <button onClick={clearCart} className="grid h-8 w-8 place-items-center rounded-full text-[var(--text-2)] transition hover:text-[var(--brand)]" title="Clear cart"><Trash2 size={15} /></button>
-            <a href={cartDownloadUrl} className="btn-primary flex items-center gap-1.5 px-3 py-2 text-sm"><Download size={14} /> Download</a>
+      {/* Always visible — not just when the cart has items — so it reads as a
+          permanent feature of the gallery, not something that appears out of
+          nowhere. */}
+      <button onClick={() => setCartOpen(true)} className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full bg-[var(--brand)] px-4 py-3 text-white shadow-2xl transition hover:brightness-110" title="Cart">
+        <ShoppingCart size={18} />
+        <span className="text-sm font-bold">{cart.size}</span>
+      </button>
+
+      {cartMsg && (
+        <div className="fixed bottom-20 right-4 z-40 max-w-xs rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm shadow-2xl">{cartMsg}</div>
+      )}
+
+      {cartOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/60" onClick={() => setCartOpen(false)}>
+          <div className="flex h-full w-full max-w-sm flex-col bg-[var(--surface)]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+              <h2 className="display text-xl">Cart ({cart.size})</h2>
+              <button onClick={() => setCartOpen(false)} className="p-1 text-[var(--text-2)] transition hover:text-[var(--text)]"><X size={20} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {cartItems.length > 0 ? (
+                <div className="space-y-2">
+                  {cartItems.map((a) => (
+                    <div key={a.id} className="flex items-center gap-3 rounded-[var(--radius)] bg-[var(--bg-2)] p-2">
+                      <img src={a.thumb} alt="" className="h-14 w-14 shrink-0 rounded object-cover" />
+                      <span className="data min-w-0 flex-1 truncate text-[var(--text-2)]">SHOT BY {a.firstName}</span>
+                      <button onClick={() => toggleCart(a.id)} className="shrink-0 p-1 text-[var(--text-3)] transition hover:text-[var(--brand)]" title="Remove"><X size={16} /></button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="data py-12 text-center text-[var(--text-2)]">Your cart is empty. Tap the cart icon on any photo to add it.</p>
+              )}
+            </div>
+            {cart.size > 0 && (
+              <div className="space-y-2 border-t border-[var(--border)] p-4">
+                <a href={cartDownloadUrl} className="btn-primary flex w-full items-center justify-center gap-2 py-3"><Download size={16} /> Download all ({cart.size})</a>
+                <button onClick={clearCart} className="btn-ghost flex w-full items-center justify-center gap-2 py-2.5 text-sm"><Trash2 size={14} /> Clear cart</button>
+              </div>
+            )}
           </div>
         </div>
       )}

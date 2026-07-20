@@ -220,6 +220,13 @@ docker compose logs worker --tail 50
   which necessarily streams through the app.
 - The worker verifies **magic bytes** and rejects/deletes impostor files. Keep
   that check.
+- **Don't add `USER app` back to `app/Dockerfile`.** `/app/public/thumbs` is
+  bind-mounted from `deploy/data/thumbs` (nginx needs direct host access to
+  serve thumbs) — a bind mount replaces the image's baked-in ownership with
+  whatever the host directory actually has, which is root on a fresh checkout.
+  `docker-entrypoint.sh` fixes ownership as root at container start, then
+  drops to the `app` user before exec'ing the real process. Removing that
+  reintroduces the `EACCES: mkdir '/app/public/thumbs/thumb'` outage.
 
 ---
 

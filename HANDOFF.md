@@ -272,6 +272,14 @@ docker compose logs worker --tail 50
 - **R2 egress is free; keep downloads on presigned R2 URLs / `/d/[id]`**, not
   proxied through the app (which would spend VPS bandwidth) — except the zip route,
   which necessarily streams through the app.
+- **Whole-gallery/whole-album zip downloads are admin-only** (`g/[slug]/download`
+  without `?id=` requires `getUser()`). A **cart selection** (`?id=` params) stays
+  public — that's the only bulk-download path for non-admins. Don't relax the
+  gate on the no-`id` branch; if you add a new "download all" entry point,
+  point it at the admin gallery manager, not the public gallery page.
+- The zip route skips a bad/missing R2 key per-item rather than aborting the
+  whole archive (one stale object shouldn't 502 an entire cart download) — keep
+  that per-item try/catch if you touch `g/[slug]/download/route.ts`.
 - The worker verifies **magic bytes** and rejects/deletes impostor files. Keep
   that check.
 - **Don't add `USER app` back to `app/Dockerfile`.** `/app/public/thumbs` is
@@ -294,6 +302,47 @@ docker compose logs worker --tail 50
 - The build must pass with **zero app env vars present** (that's the Docker build
   condition). If you add a new module that reads `process.env.X` at import time,
   you'll reintroduce the build crash — read env lazily inside functions instead.
+
+---
+
+## Thumbnails 403 (or just broken images everywhere)
+
+Root cause: this repo lives at `/root/pr-gallery` on the server, and the old
+thumbs bind mount (`deploy/data/thumbs`) resolved to
+`/root/pr-gallery/deploy/data/thumbs`. `/root` is `0700` — root-only — so
+host nginx (running as an unprivileged user, e.g. `www-data`) can't
+**traverse into** `/root` to reach anything below it, no matter what the
+thumbs directory or files themselves are chmod'd to. Every `/thumbs/`
+request 403s. This is a directory-location problem, not a permissions-on-the-
+files problem — do **not** chmod `/root` itself open to "fix" it.
+
+Fixed by moving the bind mount to `/srv/msc-thumbs` — `docker-compose.yml`
+and `deploy/nginx/gallery.conf` now both point there. `/srv` is a normal
+top-level directory nginx can already reach. `docker-entrypoint.sh` still
+does the uid-100 chown from the A2 fix, plus `chmod -R a+rX` (ownership alone
+isn't enough here — nginx runs as a *different* user than the app container,
+so the tree needs to be world-readable, not just app-owned).
+
+**This needs a one-time manual step on the server** — moving the code alone
+doesn't move the existing files, and I don't have server access to do this
+part myself:
+```
+mkdir -p /srv/msc-thumbs
+cp -a /root/pr-gallery/deploy/data/thumbs/. /srv/msc-thumbs/
+chown -R 100:101 /srv/msc-thumbs
+chmod -R a+rX /srv/msc-thumbs
+```
+Then edit the **live** nginx site (not just this repo's reference copy) —
+`/etc/nginx/sites-available/gallery.memorialstairclimb.co.uk` — to match the
+new `deploy/nginx/gallery.conf` (both the `/thumbs/` alias and its nested
+`preview` alias point at `/srv/msc-thumbs/`), then:
+```
+nginx -t && systemctl reload nginx
+```
+Verify with `curl -I https://gallery.memorialstairclimb.co.uk/thumbs/thumb/<some-id>.webp`
+— should be `200`, not `403`. Once confirmed, the old
+`/root/pr-gallery/deploy/data/thumbs` copy can be deleted; nothing reads from
+there anymore after `./deploy/update.sh` picks up the compose change.
 
 ---
 

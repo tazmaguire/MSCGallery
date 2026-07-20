@@ -27,8 +27,14 @@ services:
     env_file: .env
     ports:
       - "127.0.0.1:8090:3000"
+    # NOT ./data/thumbs — that resolves under /root (this repo lives at
+    # /root/pr-gallery), and /root is 0700, so host nginx (running as an
+    # unprivileged user) can't traverse into it to serve /thumbs/ no matter
+    # what the files themselves are chmod'd to. /srv is a normal top-level
+    # directory nginx can already reach. See "Thumbnails 403" in HANDOFF.md
+    # for the one-time host migration this requires.
     volumes:
-      - ./data/thumbs:/app/public/thumbs
+      - /srv/msc-thumbs:/app/public/thumbs
   worker:
     build: ../worker
     restart: unless-stopped

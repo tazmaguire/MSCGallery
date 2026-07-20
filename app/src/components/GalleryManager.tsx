@@ -65,6 +65,7 @@ export default function GalleryManager({ gallery, isOwner }: { gallery: any; isO
           <button onClick={() => setPanel("links")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Link2 size={15} />Upload links</button>
           <button onClick={() => setPanel("brand")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Palette size={15} />Branding</button>
           <button onClick={() => setPanel("access")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm">{gallery.view_password_hash ? <Lock size={15} /> : <KeyRound size={15} />}Access</button>
+          <a href={`/g/${gallery.slug}/download`} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm" title="Whole-gallery zip — admin only, public visitors use the cart instead"><Download size={15} />Download all</a>
           <a href={`/g/${gallery.slug}`} target="_blank" className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Eye size={15} />View</a>
         </div>
       </div>

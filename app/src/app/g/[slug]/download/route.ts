@@ -1,25 +1,32 @@
 /**
- * Zip download — an album, or a whole gallery, in one file.
+ * Zip download — an album, or a whole gallery, in one file — plus the cart's
+ * multi-select download (a specific list of asset ids).
  *
  * The trap this avoids: loading files into memory to zip them. On a 4GB VPS,
  * buffering a multi-GB gallery is an instant crash. So instead we STREAM — pull
- * each object from B2 and pipe it straight into a zip that flows out to the
+ * each object from R2 and pipe it straight into a zip that flows out to the
  * client. Memory stays flat no matter how big the download.
  *
  * And we store with NO compression. JPEGs and MP4s are already compressed;
  * recompressing them burns CPU for ~0% gain. Store-only means the VPS is just
- * shovelling bytes B2 -> client with a zip wrapper around them, which even a
+ * shovelling bytes R2 -> client with a zip wrapper around them, which even a
  * small box does comfortably and concurrently.
  *
  * This runs as a streaming response, so the browser gets a normal "Save file"
  * dialog and the download starts immediately rather than waiting for the whole
  * archive to be built first.
+ *
+ * Whole-gallery and whole-album downloads are admin-only (see getUser() check
+ * below) — public visitors download one photo at a time via /d/[id], or a
+ * cart selection via this same route with ?id= params. Cart downloads never
+ * require login; everything else does.
  */
 import { NextRequest } from "next/server";
 import { q } from "@/lib/db";
 import { getObjectStream } from "@/lib/storage";
 import { downloadFilename } from "@/lib/naming";
 import { checkGalleryAccess } from "@/lib/security";
+import { getUser } from "@/lib/auth";
 import archiver from "archiver";
 import { PassThrough } from "node:stream";
 
@@ -38,6 +45,13 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
   const albumSlug = url.searchParams.get("album"); // optional; absent = whole gallery
   const ids = url.searchParams.getAll("id"); // optional; a cart selection — overrides album
   if (ids.length > MAX_CART_IDS) return new Response(`Too many photos in one download (max ${MAX_CART_IDS}).`, { status: 400 });
+
+  // Bulk (whole gallery / whole album) is an admin action now — public users
+  // only ever hit this route via a cart selection (ids.length > 0).
+  if (!ids.length) {
+    const user = await getUser();
+    if (!user) return new Response("Sign in required for a bulk download.", { status: 403 });
+  }
 
   const [gallery] = await q(
     `SELECT * FROM galleries WHERE slug=$1 AND is_published`,
@@ -80,28 +94,40 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
   const archive = archiver("zip", { store: true }); // STORE, not deflate
   const out = new PassThrough();
   archive.pipe(out);
+  // Swallow archiver's own async warnings/errors (e.g. a stream that broke
+  // mid-append) rather than letting them crash the process — the per-item
+  // try/catch below already handles the common case (object missing
+  // entirely); this is the backstop for the rarer mid-stream failure.
+  archive.on("warning", (e) => console.error("zip warning:", e.message));
+  archive.on("error", (e) => console.error("zip error:", e.message));
 
-  // Feed the archive. Each entry is a fresh stream from B2; archiver applies
-  // backpressure, so we never pull faster than the client drains.
+  // Feed the archive. Each entry is a fresh stream from R2; archiver applies
+  // backpressure, so we never pull faster than the client drains. One bad or
+  // missing key must not take down the whole download — skip it and keep
+  // going, so a single stale R2 object doesn't 502 the entire zip.
   (async () => {
     try {
       for (const r of rows) {
-        const ext = r.kind === "video" ? "mp4" : "jpg";
-        const name = downloadFilename({
-          shortCode: gallery.short_code,
-          location: gallery.location,
-          contributor: r.contributor,
-          seq: Number(r.seq),
-          ext,
-        });
+        try {
+          const ext = r.kind === "video" ? "mp4" : "jpg";
+          const name = downloadFilename({
+            shortCode: gallery.short_code,
+            location: gallery.location,
+            contributor: r.contributor,
+            seq: Number(r.seq),
+            ext,
+          });
 
-        // Put each album in its own folder inside the zip when grabbing the
-        // whole gallery or a cart selection that may span albums. For a single
-        // album, flat is nicer.
-        const path = albumSlug && !ids.length ? name : `${r.album_slug}/${name}`;
+          // Put each album in its own folder inside the zip when grabbing the
+          // whole gallery or a cart selection that may span albums. For a single
+          // album, flat is nicer.
+          const path = albumSlug && !ids.length ? name : `${r.album_slug}/${name}`;
 
-        const body = await getObjectStream(r.public_key);
-        archive.append(body as any, { name: path });
+          const body = await getObjectStream(r.public_key);
+          archive.append(body as any, { name: path });
+        } catch (e) {
+          console.error(`zip: skipping ${r.public_key} — ${(e as Error).message}`);
+        }
       }
       await archive.finalize();
     } catch (e) {

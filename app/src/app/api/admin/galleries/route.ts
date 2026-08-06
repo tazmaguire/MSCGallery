@@ -62,8 +62,12 @@ export async function PATCH(req: NextRequest) {
   if (max_session_bytes) await q(`UPDATE galleries SET max_session_bytes=$2 WHERE id=$1`, [id, max_session_bytes]);
   if (max_file_bytes) await q(`UPDATE galleries SET max_file_bytes=$2 WHERE id=$1`, [id, max_file_bytes]);
   if (cover_asset_id !== undefined) await q(`UPDATE galleries SET cover_asset_id=$2 WHERE id=$1`, [id, cover_asset_id]);
-  if (category_id !== undefined) await q(`UPDATE galleries SET category_id=$2 WHERE id=$1`, [id, category_id || null]);
-  if (is_unlisted !== undefined) await q(`UPDATE galleries SET is_unlisted=$2 WHERE id=$1`, [id, is_unlisted]);
+  // category_id/is_unlisted are db/007_config_and_categories.sql columns — the
+  // Access modal always sends both alongside view_password, so on a DB that
+  // hasn't had 007 applied yet this must degrade quietly rather than 500 and
+  // block setting a password (which has no such dependency).
+  if (category_id !== undefined) { try { await q(`UPDATE galleries SET category_id=$2 WHERE id=$1`, [id, category_id || null]); } catch {} }
+  if (is_unlisted !== undefined) { try { await q(`UPDATE galleries SET is_unlisted=$2 WHERE id=$1`, [id, is_unlisted]); } catch {} }
   // view_password: "" clears protection, a non-empty string sets a new password, omitted = unchanged.
   if (view_password !== undefined) {
     const hash = view_password.trim() ? await bcrypt.hash(view_password.trim(), 12) : null;

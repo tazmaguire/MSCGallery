@@ -106,6 +106,10 @@ app/                     Next.js 14 (App Router, TypeScript)
     fonts.ts             curated Google Fonts lists + href builder (per-gallery)
     siteConfig.ts        app-wide white-label identity — async, DB (site_settings)
                          overrides SITE_* env vars overrides hardcoded defaults
+    storageCost.ts       R2 storage size/cost display helpers for /admin —
+                         $0.015/GB-month, first 10GB/mo free (site-wide only,
+                         not attributed per gallery). Update the rate here if
+                         Cloudflare changes it; there's no API to read it live.
   src/app/
     g/[slug]/            public gallery (page, password-gated if set) + download/
                          (streaming zip, also password-gated + cart-selection aware,
@@ -163,6 +167,12 @@ db/006_site_display_mode.sql site_settings.display_mode — 'logo' | 'name' | 'b
 db/007_config_and_categories.sql encrypted_settings (AES-256-GCM R2 creds +
                          domain, see secrets.ts), gallery_categories, and
                          galleries.category_id / is_unlisted.
+db/008_asset_public_bytes.sql assets.public_bytes — size of the re-encoded
+                         deliverable the worker pushes to R2 (thumb/preview/
+                         poster live on local disk, not R2, so they're
+                         excluded). Feeds the storage/cost totals in /admin;
+                         only backfills for assets re-derived after this
+                         migration, not retroactively.
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/

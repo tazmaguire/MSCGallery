@@ -12,17 +12,25 @@ export async function GET() {
   const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
   let galleries;
   try {
+    // Storage occupied by everything currently in R2 for this gallery: the
+    // original upload (bytes, since db/001) plus the re-encoded deliverable
+    // (public_bytes, db/008_asset_public_bytes.sql) — thumb/preview/poster
+    // live on local disk, not R2, so they don't count.
     galleries = await q(
       `SELECT g.*, gc.name AS category_name,
          (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='visible' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS visible,
-         (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='pending' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS pending
+         (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='pending' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS pending,
+         (SELECT COALESCE(SUM(COALESCE(a.bytes,0) + COALESCE(a.public_bytes,0)),0) FROM assets a WHERE a.gallery_id=g.id) AS storage_bytes
        FROM galleries g LEFT JOIN gallery_categories gc ON gc.id=g.category_id ORDER BY g.event_date DESC NULLS LAST`);
   } catch {
-    // db/007_config_and_categories.sql not applied yet — fall back to no category join.
+    // db/007_config_and_categories.sql and/or db/008_asset_public_bytes.sql
+    // not applied yet — fall back to no category join, storage from
+    // original-upload bytes only (that column has always existed).
     galleries = await q(
       `SELECT g.*,
          (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='visible' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS visible,
-         (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='pending' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS pending
+         (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='pending' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS pending,
+         (SELECT COALESCE(SUM(a.bytes),0) FROM assets a WHERE a.gallery_id=g.id) AS storage_bytes
        FROM galleries g ORDER BY g.event_date DESC NULLS LAST`);
   }
   return NextResponse.json({ galleries });

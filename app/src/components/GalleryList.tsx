@@ -1,20 +1,33 @@
 "use client";
-import { useState, useEffect } from "react"; import Link from "next/link"; import { Plus, Eye, EyeOff } from "lucide-react";
+import { useState, useEffect, useMemo } from "react"; import Link from "next/link"; import { Plus, Eye, EyeOff, Database } from "lucide-react";
+import { formatBytes, billedMonthlyCost, formatUSD } from "@/lib/storageCost";
 export default function GalleryList({ isOwner }: { isOwner: boolean }) {
   const [g, setG] = useState<any[]>([]); const [show, setShow] = useState(false);
   const load = () => fetch("/api/admin/galleries").then(r => r.json()).then(d => setG(d.galleries));
   useEffect(() => { load(); }, []);
   const toggle = (x: any) => fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: x.id, is_published: !x.is_published }) }).then(load);
+  const totalBytes = useMemo(() => g.reduce((n, x) => n + Number(x.storage_bytes || 0), 0), [g]);
   return (
     <div className="mx-auto max-w-4xl px-4 py-6">
       <div className="mb-5 flex items-center justify-between"><h1 className="display text-3xl">Galleries</h1>
         {isOwner && <button onClick={() => setShow(true)} className="btn-primary flex items-center gap-2 px-3 py-2 text-sm"><Plus size={15} />New gallery</button>}</div>
+      {g.length > 0 && (
+        <div className="card mb-5 flex items-center gap-3 p-4">
+          <Database size={18} className="shrink-0 text-[var(--text-3)]" />
+          <div className="data flex-1 text-[var(--text-2)]">
+            <span className="text-[var(--text)]">{formatBytes(totalBytes)}</span> used across {g.length} {g.length === 1 ? "gallery" : "galleries"}
+            <span className="mx-1.5 text-[var(--text-3)]">·</span>
+            ~<span className="text-[var(--text)]">{formatUSD(billedMonthlyCost(totalBytes))}</span>/mo on R2
+            <span className="ml-1.5 text-[var(--text-3)]">(first 10GB/mo free, then $0.015/GB)</span>
+          </div>
+        </div>
+      )}
       <div className="space-y-2">
         {g.map(x => (
           <div key={x.id} className="card flex items-center justify-between gap-3 p-4">
             <Link href={`/admin/g/${x.id}`} className="min-w-0 flex-1">
               <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full" style={{ background: x.brand?.primary || "#E8442A" }} /><span className="display truncate text-xl">{x.name}</span>{x.is_unlisted && <span className="data rounded-full bg-white/5 px-2 py-0.5 text-[var(--text-3)]">Unlisted</span>}{x.category_name && <span className="data rounded-full bg-white/5 px-2 py-0.5 text-[var(--text-3)]">{x.category_name}</span>}</div>
-              <div className="data mt-1 flex gap-3"><span className="text-emerald-400">{x.visible} live</span>{Number(x.pending) > 0 && <span className="text-[var(--accent)]">{x.pending} pending</span>}<span className="text-[var(--text-3)]">{x.short_code}</span></div>
+              <div className="data mt-1 flex gap-3"><span className="text-emerald-400">{x.visible} live</span>{Number(x.pending) > 0 && <span className="text-[var(--accent)]">{x.pending} pending</span>}<span className="text-[var(--text-3)]">{x.short_code}</span><span className="text-[var(--text-3)]">{formatBytes(Number(x.storage_bytes || 0))}</span></div>
             </Link>
             <button onClick={() => toggle(x)} className={`flex items-center gap-1.5 rounded-[var(--radius)] px-2.5 py-1.5 text-xs font-medium ${x.is_published ? "bg-emerald-500/20 text-emerald-300" : "bg-white/5 text-[var(--text-2)]"}`}>{x.is_published ? <><Eye size={13} />Live</> : <><EyeOff size={13} />Hidden</>}</button>
           </div>

@@ -3,8 +3,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star, Tag, Search } from "lucide-react";
 import { DISPLAY_FONTS, BODY_FONTS, MONO_FONTS } from "@/lib/fonts";
+import { formatBytes, flatMonthlyCost, formatUSD } from "@/lib/storageCost";
 
-export default function GalleryManager({ gallery, isOwner }: { gallery: any; isOwner: boolean }) {
+export default function GalleryManager({ gallery, isOwner, storageBytes }: { gallery: any; isOwner: boolean; storageBytes?: number }) {
   const [albums, setAlbums] = useState<any[]>([]); const [active, setActive] = useState<string | null>(null);
   const [assets, setAssets] = useState<any[]>([]); const [sel, setSel] = useState<Set<string>>(new Set());
   const [links, setLinks] = useState<any[]>([]);
@@ -55,7 +56,15 @@ export default function GalleryManager({ gallery, isOwner }: { gallery: any; isO
   return (
     <div className="mx-auto max-w-7xl px-4 py-6" style={style}>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div><h1 className="display text-3xl">{gallery.name}</h1><p className="data text-[var(--text-2)]">{gallery.short_code} · /g/{gallery.slug}</p></div>
+        <div>
+          <h1 className="display text-3xl">{gallery.name}</h1>
+          <p className="data text-[var(--text-2)]">
+            {gallery.short_code} · /g/{gallery.slug}
+            {storageBytes !== undefined && (
+              <span className="text-[var(--text-3)]"> · {formatBytes(storageBytes)} (~{formatUSD(flatMonthlyCost(storageBytes))}/mo)</span>
+            )}
+          </p>
+        </div>
         <div className="flex flex-wrap gap-2">
           <div className="flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-2.5">
             <Search size={14} className="text-[var(--text-3)]" />

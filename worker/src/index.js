@@ -169,12 +169,13 @@ async function derive(a, dir) {
     await sharp(orig, { failOn: "none" }).rotate().jpeg({ quality: 92, mozjpeg: true, chromaSubsampling: "4:4:4" }).toFile(pub);
     await stamp(pub, credit);
     const publicKey = `pub/${a.id.slice(0, 2)}/${a.id}.jpg`;
-    await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: publicKey, Body: await readFile(pub),
+    const pubBuf = await readFile(pub);
+    await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: publicKey, Body: pubBuf,
       ContentType: "image/jpeg", CacheControl: "public, max-age=31536000, immutable" }));
 
     await pushDerivative("thumb", `${a.id}.webp`, thumb, "image/webp");
     await pushDerivative("preview", `${a.id}.webp`, await readFile(previewFile), "image/webp");
-    m.thumb_key = m.preview_key = `${a.id}.webp`; m.public_key = publicKey;
+    m.thumb_key = m.preview_key = `${a.id}.webp`; m.public_key = publicKey; m.public_bytes = pubBuf.length;
   } else {
     const probe = await exec("ffprobe", ["-v", "error", "-select_streams", "v:0",
       "-show_entries", "stream=width,height:format=duration", "-of", "json", orig]);
@@ -192,20 +193,32 @@ async function derive(a, dir) {
       "-c:v", "libx264", "-preset", "medium", "-crf", "21", "-c:a", "aac", "-b:a", "160k",
       "-movflags", "+faststart", "-metadata", `artist=${credit.name}`, "-metadata", `copyright=${credit.copyright}`, pub]);
     const publicKey = `pub/${a.id.slice(0, 2)}/${a.id}.mp4`;
-    await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: publicKey, Body: await readFile(pub),
+    const pubBuf = await readFile(pub);
+    await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: publicKey, Body: pubBuf,
       ContentType: "video/mp4", CacheControl: "public, max-age=31536000, immutable" }));
 
     await pushDerivative("thumb", `${a.id}.webp`, thumb, "image/webp");
     await pushDerivative("poster", `${a.id}.webp`, posterBuf, "image/webp");
-    m.thumb_key = m.poster_key = `${a.id}.webp`; m.public_key = publicKey;
+    m.thumb_key = m.poster_key = `${a.id}.webp`; m.public_key = publicKey; m.public_bytes = pubBuf.length;
   }
 
-  await db.query(
-    `UPDATE assets SET status='ready', checksum=$2, width=$3, height=$4, duration_s=$5,
-       taken_at=COALESCE($6::timestamptz, taken_at, created_at),
-       thumb_key=$7, preview_key=$8, poster_key=$9, public_key=$10, error=NULL WHERE id=$1`,
-    [a.id, m.checksum, m.width ?? null, m.height ?? null, m.duration_s ?? null, m.taken_at ?? null,
-     m.thumb_key ?? null, m.preview_key ?? null, m.poster_key ?? null, m.public_key]);
+  const readyParams = [a.id, m.checksum, m.width ?? null, m.height ?? null, m.duration_s ?? null, m.taken_at ?? null,
+    m.thumb_key ?? null, m.preview_key ?? null, m.poster_key ?? null, m.public_key];
+  try {
+    // public_bytes is db/008_asset_public_bytes.sql — feeds the storage/cost
+    // totals in /admin. Falls back below if that migration isn't applied yet.
+    await db.query(
+      `UPDATE assets SET status='ready', checksum=$2, width=$3, height=$4, duration_s=$5,
+         taken_at=COALESCE($6::timestamptz, taken_at, created_at),
+         thumb_key=$7, preview_key=$8, poster_key=$9, public_key=$10, public_bytes=$11, error=NULL WHERE id=$1`,
+      [...readyParams, m.public_bytes ?? null]);
+  } catch {
+    await db.query(
+      `UPDATE assets SET status='ready', checksum=$2, width=$3, height=$4, duration_s=$5,
+         taken_at=COALESCE($6::timestamptz, taken_at, created_at),
+         thumb_key=$7, preview_key=$8, poster_key=$9, public_key=$10, error=NULL WHERE id=$1`,
+      readyParams);
+  }
   await detectTags(a);
   log(`derived ${a.kind} ${a.id}`);
 }

@@ -191,7 +191,7 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
                   {cart.has(a.id) ? <Check size={15} /> : <ShoppingCart size={15} />}
                 </button>
                 <button onClick={(e) => { e.stopPropagation(); dl(a.download_url, a.download_filename); }} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/40 text-white/90 opacity-0 backdrop-blur transition group-hover:opacity-100 focus:opacity-100" title="Download"><Download size={15} /></button>
-                <figcaption className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-3 pb-2 pt-8 opacity-0 transition group-hover:opacity-100"><span className="data text-white/90"><span className="text-[var(--text-2)]">SHOT BY</span> {a.firstName}</span></figcaption>
+                <figcaption className="pointer-events-none absolute bottom-2 left-2 rounded-full bg-black/40 px-2.5 py-1 text-white/90 opacity-0 backdrop-blur transition group-hover:opacity-100"><span className="data text-[11px]">SHOT BY {a.firstName}</span></figcaption>
               </figure>
             ))}
             {!assets.length && <p className="data col-span-full py-24 text-center text-[var(--text-2)]">Nothing here yet.</p>}
@@ -213,7 +213,7 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
           <div className="border-t border-white/15 px-5 py-4">
             <div className="mx-auto flex max-w-3xl flex-col gap-3">
               <div className="flex items-center justify-between">
-                <span className="data"><span className="text-white/60">SHOT BY</span> {current.firstName}</span>
+                <span className="data text-white/90"><span className="text-white/60">SHOT BY</span> {current.firstName}</span>
                 <span className="data text-white/60">{current.width} × {current.height}</span>
               </div>
               <p className="data text-white/45">You're viewing a preview — download the full-size file below, it's free.</p>

@@ -91,7 +91,13 @@ Key deployment facts:
 ```
 app/                     Next.js 14 (App Router, TypeScript)
   src/lib/
-    storage.ts           R2 (S3 API). LAZY config. presign up/down, getObjectStream.
+    storage.ts           R2 (S3 API). LAZY + async config (DB via secrets.ts
+                         overrides S3_* env vars). presign up/down, getObjectStream.
+    secrets.ts           encrypted_settings (db/007) — AES-256-GCM, key from
+                         ENCRYPTION_KEY. getSecret/setSecret/resolveConfig
+                         (DB overrides env, same layering as siteConfig).
+                         Never holds AUTH_SECRET/WORKER_SHARED_SECRET/DB
+                         password — see the migration's header comment.
     db.ts  auth.ts        pg pool; bcrypt+jose sessions (owner/moderator roles)
     security.ts          per-IP rate limit, PIN lockout, IP hashing, audit log
     config.ts            boot-time env validation (throws on missing/placeholder)
@@ -109,20 +115,26 @@ app/                     Next.js 14 (App Router, TypeScript)
     u/[token]/           guest upload page (open / pin modes)
     admin/               list, gallery manager, moderation queue (grid +
                          multi-select), login, account (self-service),
-                         users (owner-only), settings (owner-only, global branding)
+                         users (owner-only), settings (owner-only — Site tab:
+                         global branding; Storage & domain tab: R2 + PUBLIC_SITE_URL)
     api/                 upload/presign (THE security boundary), admin/*, auth,
+                         admin/categories (gallery_categories CRUD),
+                         admin/settings/storage (encrypted R2/domain config),
+                         internal/storage-config (worker fetches resolved R2
+                         creds at startup, worker-secret authenticated),
                          gallery/unlock (gallery password check),
                          gallery/[slug]/search (bib-number search backend —
                          no public UI entry point right now, see below)
   src/components/        Gallery (+ cart, breadcrumb), Uploader (stage → submit
                          → confirmation), ModerationQueue (grid, multi-select,
                          approve-selected/approve-all, gallery filter tabs),
-                         GalleryManager (+ delete/edit/cover/tags/bib search —
-                         admin-side tagging UI stays, only the PUBLIC bib
-                         search box was pulled), ThemeToggle, AdminNav (shows
-                         the deployed build's git SHA — see below), GalleryList,
-                         SiteHeader, GalleryPasswordGate, AccountForm,
-                         UsersManager, SiteSettingsForm
+                         GalleryManager (+ delete/edit/cover/tags/bib search,
+                         Access panel: password/unlisted/category — admin-side
+                         tagging UI stays, only the PUBLIC bib search box was
+                         pulled), ThemeToggle, AdminNav (shows the deployed
+                         build's git SHA — see below), GalleryList, SiteHeader,
+                         GalleryPasswordGate, AccountForm, UsersManager,
+                         SiteSettingsForm, StorageSettingsForm, SettingsTabs
   src/lib/moderation.ts  single source of truth for pending-queue count/list/
                          galleries — every page reads through this, not its own query
   src/lib/siteIdentity.ts pure display-mode logic (resolveSiteIdentity), split
@@ -148,6 +160,9 @@ db/005_site_settings.sql single-row site_settings — global branding set from
 db/006_site_display_mode.sql site_settings.display_mode — 'logo' | 'name' | 'both',
                          how the site identity renders in AdminNav, the login
                          page, and the public site header. Defaults to 'both'.
+db/007_config_and_categories.sql encrypted_settings (AES-256-GCM R2 creds +
+                         domain, see secrets.ts), gallery_categories, and
+                         galleries.category_id / is_unlisted.
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -191,6 +206,16 @@ Each migration is written with `IF NOT EXISTS` guards so re-running it is safe.
   Global branding, separate from per-gallery `galleries.brand`. Read via
   `siteConfig()` (async — DB row overrides `SITE_*` env vars overrides
   hardcoded defaults), written via `/admin/settings` (owner-only).
+- **encrypted_settings**: keyed rows (R2 credentials, `PUBLIC_SITE_URL`), AES-256-GCM
+  encrypted with a key derived from `ENCRYPTION_KEY`. Read via `resolveConfig()`
+  in `secrets.ts` (DB overrides the matching `S3_*`/`PUBLIC_SITE_URL` env var),
+  written via `/admin/settings/storage` (owner-only). Never holds
+  `AUTH_SECRET`/`WORKER_SHARED_SECRET`/the DB password — those stay `.env`-only.
+- **gallery_categories** + **galleries.category_id**: free-form admin-defined
+  tags (Sport, Dance, Festival, …) for grouping galleries on the home page.
+  **galleries.is_unlisted**: hidden from the home page listing but still
+  reachable by direct link/QR — independent of `is_published`, which is what
+  actually gates whether the link works at all.
 
 ---
 
@@ -323,6 +348,19 @@ docker compose logs worker --tail 50
   `docker-entrypoint.sh` fixes ownership as root at container start, then
   drops to the `app` user before exec'ing the real process. Removing that
   reintroduces the `EACCES: mkdir '/app/public/thumbs/thumb'` outage.
+- **`S3_ENDPOINT` must stay in `.env`, even though the other R2 fields don't
+  have to.** `middleware.ts` stamps it into the CSP on every response and runs
+  on Next's Edge runtime, which can't reach Postgres or decrypt
+  `encrypted_settings` — it only ever sees `process.env`. An owner can change
+  the endpoint from `/admin/settings`, but if `S3_ENDPOINT` in `.env` doesn't
+  match, uploads silently CSP-block in the browser exactly like an R2 CORS
+  mismatch does. `config.ts` still requires it at boot for this reason.
+- **The worker doesn't have `ENCRYPTION_KEY` and can't read `encrypted_settings`
+  itself.** It fetches resolved R2 credentials from the app's
+  `/api/internal/storage-config` once at startup (worker-secret authenticated,
+  falls back to its own `S3_*` env vars if that fails). A storage change made
+  in `/admin/settings` needs `docker compose restart worker` to reach the
+  worker — it isn't picked up live like it is for the app.
 - **`siteConfig.ts` imports `db.ts` (pg) — never import it from a `"use client"`
   component**, even for a type or a pure helper. Webpack bundles the whole
   module graph for the browser, and `pg` needs Node-only builtins (`fs`,

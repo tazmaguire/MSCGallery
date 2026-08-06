@@ -201,18 +201,22 @@ variable** for each line below. This is where your R2 notepad comes in.
 |---|---|
 | `DB_PASSWORD` | make one up, e.g. a 20-char random string |
 | `DATABASE_URL` | `postgresql://gallery:THAT_SAME_PASSWORD@db:5432/gallery` |
-| `S3_ENDPOINT` | your R2 endpoint `https://….r2.cloudflarestorage.com` |
+| `S3_ENDPOINT` | your R2 endpoint `https://….r2.cloudflarestorage.com` — must be set here even if you plan to fill in the rest from the admin UI (see note below) |
 | `S3_REGION` | `auto` |
-| `S3_BUCKET` | `memorial-gallery` |
-| `S3_ACCESS_KEY` | R2 Access Key ID |
-| `S3_SECRET` | R2 Secret Access Key |
-| `PUBLIC_SITE_URL` | `https://gallery.memorialstairclimb.com` |
 | `AUTH_SECRET` | a 32-char random string (see below) |
 | `WORKER_SHARED_SECRET` | a different 32-char random string |
+| `ENCRYPTION_KEY` | a third, different 32-char random string |
 | `THUMB_DIR` | `/app/public/thumbs` |
 
 Need random strings? 🖥️ back in your SSH window run `openssl rand -base64 32`
-twice and copy each result.
+three times and copy each result.
+
+`S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET`, and `PUBLIC_SITE_URL` can be left
+out entirely here and set instead from the app itself once it's up — log in,
+go to **Settings → Storage & domain**. They're encrypted before being stored
+and take effect immediately, no redeploy needed. If you'd rather set them
+here anyway (e.g. to skip the extra login step), that's fine too — a value
+saved in the app always wins over the one here.
 
 ### 4.5 Point Caddy at your domain
 🖥️ In the SSH window:

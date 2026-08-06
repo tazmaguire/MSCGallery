@@ -61,10 +61,44 @@ const cfg = {
 };
 
 const db = new pg.Pool({ connectionString: cfg.db, max: 4 });
+
+// R2 credentials can now be set from /admin/settings instead of baked into
+// .env (db/007_config_and_categories.sql) — the app holds the single
+// encrypted copy, and the worker (a separate process with no ENCRYPTION_KEY
+// of its own) fetches the resolved values from it at startup, worker-secret
+// authenticated. Falls back to this process's own S3_* env vars if the app
+// isn't reachable yet (e.g. first boot ordering) or on an older app image
+// without this endpoint. A storage change made later in the UI needs the
+// worker container restarted to pick it up — `docker compose restart worker`.
+async function resolveStorageConfig() {
+  const fallback = {
+    endpoint: process.env.S3_ENDPOINT, region: process.env.S3_REGION || "auto", bucket: process.env.S3_BUCKET,
+    accessKeyId: process.env.S3_ACCESS_KEY, secretAccessKey: process.env.S3_SECRET,
+  };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const r = await fetch(`${cfg.vpsUrl}/api/internal/storage-config`, { headers: { "x-worker-secret": cfg.secret } });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      const d = await r.json();
+      return {
+        endpoint: d.endpoint || fallback.endpoint, region: d.region || fallback.region, bucket: d.bucket || fallback.bucket,
+        accessKeyId: d.accessKeyId || fallback.accessKeyId, secretAccessKey: d.secretAccessKey || fallback.secretAccessKey,
+      };
+    } catch (e) {
+      log(`storage config fetch failed (attempt ${attempt + 1}/5): ${e.message} — retrying`);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  log("storage config fetch: giving up, using this process's own S3_* env vars");
+  return fallback;
+}
+
+const storageCfg = await resolveStorageConfig();
+cfg.bucket = storageCfg.bucket;
 const s3 = new S3Client({
-  endpoint: process.env.S3_ENDPOINT,
-  region: process.env.S3_REGION || "auto",
-  credentials: { accessKeyId: process.env.S3_ACCESS_KEY, secretAccessKey: process.env.S3_SECRET },
+  endpoint: storageCfg.endpoint,
+  region: storageCfg.region,
+  credentials: { accessKeyId: storageCfg.accessKeyId, secretAccessKey: storageCfg.secretAccessKey },
   forcePathStyle: true, // keep addressing consistent with app/src/lib/storage.ts
 });
 

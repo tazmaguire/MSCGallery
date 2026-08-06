@@ -218,16 +218,28 @@ function QRModal({ gallery, token, onClose }: any) {
 function AccessModal({ gallery, onClose }: any) {
   const [protectedNow, setProtectedNow] = useState(!!gallery.view_password_hash);
   const [password, setPassword] = useState(""); const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
+  const [unlisted, setUnlisted] = useState(!!gallery.is_unlisted);
+  const [categoryId, setCategoryId] = useState(gallery.category_id || "");
+  const [categories, setCategories] = useState<any[]>([]);
+  const [newCategory, setNewCategory] = useState("");
+  const loadCategories = () => fetch("/api/admin/categories").then(r => r.json()).then(d => setCategories(d.categories || []));
+  useEffect(() => { loadCategories(); }, []);
+  const addCategory = async () => {
+    if (!newCategory.trim()) return;
+    const r = await fetch("/api/admin/categories", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: newCategory }) });
+    const c = await r.json();
+    if (r.ok) { setNewCategory(""); await loadCategories(); setCategoryId(c.id); }
+  };
   const save = async () => {
     setBusy(true); setErr("");
     try {
       // Unchecked -> clear. Checked + typed a password -> set it. Checked + left
       // blank with a password already set -> omit the field, keep it as-is.
-      const body: any = { id: gallery.id };
+      const body: any = { id: gallery.id, is_unlisted: unlisted, category_id: categoryId };
       if (!protectedNow) body.view_password = "";
       else if (password) body.view_password = password;
       const r = await fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-      if (!r.ok) { setErr((await r.json().catch(() => ({}))).error || "Couldn't save. Has the db/002_customisation.sql migration been applied?"); return; }
+      if (!r.ok) { setErr((await r.json().catch(() => ({}))).error || "Couldn't save. Has the db/002_customisation.sql / db/007_config_and_categories.sql migration been applied?"); return; }
       onClose(); location.reload();
     } finally { setBusy(false); }
   };
@@ -238,6 +250,20 @@ function AccessModal({ gallery, onClose }: any) {
         <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder={gallery.view_password_hash ? "New password (leave blank to keep current)" : "Password"} className="mb-1.5 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
         <p className="data mb-4 text-[var(--text-3)]">Visitors need this to view the gallery page, download the zip, or download individual photos.</p>
       </>}
+
+      <label className="mb-1.5 flex items-center gap-2 text-sm"><input type="checkbox" checked={unlisted} onChange={e => setUnlisted(e.target.checked)} className="h-4 w-4 accent-[var(--brand)]" />Unlisted</label>
+      <p className="data mb-4 text-[var(--text-3)]">Hidden from the home page listing, but still reachable by anyone with the direct link (or QR code). Independent of the Published toggle, which controls whether the link works at all.</p>
+
+      <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Category</label>
+      <select value={categoryId} onChange={e => setCategoryId(e.target.value)} className="mb-2 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none">
+        <option value="">No category</option>
+        {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+      <div className="mb-4 flex gap-2">
+        <input value={newCategory} onChange={e => setNewCategory(e.target.value)} onKeyDown={e => e.key === "Enter" && addCategory()} placeholder="New category, e.g. Sport" className="flex-1 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)]" />
+        <button onClick={addCategory} disabled={!newCategory.trim()} className="btn-ghost px-3 py-2 text-xs disabled:opacity-30">Add</button>
+      </div>
+
       {err && <p className="data mb-3 text-[var(--brand)]">{err}</p>}
       <button onClick={save} disabled={busy || (protectedNow && !gallery.view_password_hash && !password)} className="btn-primary w-full py-2.5 disabled:opacity-30">{busy ? "Saving…" : "Save"}</button>
     </Modal>

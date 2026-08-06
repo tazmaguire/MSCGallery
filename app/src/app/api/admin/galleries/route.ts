@@ -10,11 +10,21 @@ const DEFAULT_TERMS =
 
 export async function GET() {
   const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
-  const galleries = await q(
-    `SELECT g.*,
-       (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='visible' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS visible,
-       (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='pending' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS pending
-     FROM galleries g ORDER BY g.event_date DESC NULLS LAST`);
+  let galleries;
+  try {
+    galleries = await q(
+      `SELECT g.*, gc.name AS category_name,
+         (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='visible' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS visible,
+         (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='pending' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS pending
+       FROM galleries g LEFT JOIN gallery_categories gc ON gc.id=g.category_id ORDER BY g.event_date DESC NULLS LAST`);
+  } catch {
+    // db/007_config_and_categories.sql not applied yet — fall back to no category join.
+    galleries = await q(
+      `SELECT g.*,
+         (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='visible' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS visible,
+         (SELECT count(*) FROM assets a WHERE a.gallery_id=g.id AND a.visibility='pending' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS pending
+       FROM galleries g ORDER BY g.event_date DESC NULLS LAST`);
+  }
   return NextResponse.json({ galleries });
 }
 
@@ -40,7 +50,8 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
   const { id, brand, upload_terms, is_published, allow_uploads, name, location,
-          max_files_per_session, max_session_bytes, max_file_bytes, cover_asset_id, view_password } = await req.json();
+          max_files_per_session, max_session_bytes, max_file_bytes, cover_asset_id, view_password,
+          category_id, is_unlisted } = await req.json();
   if (brand !== undefined) await q(`UPDATE galleries SET brand=$2 WHERE id=$1`, [id, JSON.stringify(brand)]);
   if (upload_terms !== undefined) await q(`UPDATE galleries SET upload_terms=$2 WHERE id=$1`, [id, upload_terms]);
   if (is_published !== undefined) await q(`UPDATE galleries SET is_published=$2 WHERE id=$1`, [id, is_published]);
@@ -51,6 +62,8 @@ export async function PATCH(req: NextRequest) {
   if (max_session_bytes) await q(`UPDATE galleries SET max_session_bytes=$2 WHERE id=$1`, [id, max_session_bytes]);
   if (max_file_bytes) await q(`UPDATE galleries SET max_file_bytes=$2 WHERE id=$1`, [id, max_file_bytes]);
   if (cover_asset_id !== undefined) await q(`UPDATE galleries SET cover_asset_id=$2 WHERE id=$1`, [id, cover_asset_id]);
+  if (category_id !== undefined) await q(`UPDATE galleries SET category_id=$2 WHERE id=$1`, [id, category_id || null]);
+  if (is_unlisted !== undefined) await q(`UPDATE galleries SET is_unlisted=$2 WHERE id=$1`, [id, is_unlisted]);
   // view_password: "" clears protection, a non-empty string sets a new password, omitted = unchanged.
   if (view_password !== undefined) {
     const hash = view_password.trim() ? await bcrypt.hash(view_password.trim(), 12) : null;

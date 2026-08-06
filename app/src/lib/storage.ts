@@ -16,23 +16,35 @@ import {
   CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { resolveConfig } from "./secrets";
 
-function required(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing required env var: ${name}`);
-  return v;
-}
-
-// Lazy singletons — created on first real use, never at import/build time.
+// Storage config: an /admin/settings override in `encrypted_settings` (see
+// db/007_config_and_categories.sql) wins when present, the matching S3_* env
+// var is the fallback — same layering as siteConfig(). Cached per-process
+// once resolved so we're not hitting the DB on every R2 call; the settings
+// UI process-restarts the app after a save (see api/admin/settings/storage)
+// so a change always takes effect on next boot at the latest.
 let _s3: S3Client | null = null;
 let _bucket: string | null = null;
 
-function client(): S3Client {
+async function required(key: string, envVar: string): Promise<string> {
+  const v = await resolveConfig(key, envVar);
+  if (!v) throw new Error(`Storage isn't configured yet — set it at /admin/settings, or set ${envVar}.`);
+  return v;
+}
+
+async function client(): Promise<S3Client> {
   if (!_s3) {
+    const [endpoint, region, accessKeyId, secretAccessKey] = await Promise.all([
+      required("s3_endpoint", "S3_ENDPOINT"),
+      resolveConfig("s3_region", "S3_REGION"),
+      required("s3_access_key", "S3_ACCESS_KEY"),
+      required("s3_secret", "S3_SECRET"),
+    ]);
     _s3 = new S3Client({
-      endpoint: required("S3_ENDPOINT"),
-      region: process.env.S3_REGION || "auto",
-      credentials: { accessKeyId: required("S3_ACCESS_KEY"), secretAccessKey: required("S3_SECRET") },
+      endpoint,
+      region: region || "auto",
+      credentials: { accessKeyId, secretAccessKey },
       // Without this, the SDK defaults to virtual-hosted-style URLs
       // (https://<bucket>.<account>.r2.cloudflarestorage.com/...), which is a
       // different origin than S3_ENDPOINT — and middleware.ts's CSP connect-src
@@ -45,8 +57,8 @@ function client(): S3Client {
   }
   return _s3;
 }
-function bucket(): string {
-  if (!_bucket) _bucket = required("S3_BUCKET");
+async function bucket(): Promise<string> {
+  if (!_bucket) _bucket = await required("s3_bucket", "S3_BUCKET");
   return _bucket;
 }
 
@@ -62,55 +74,55 @@ const MULTIPART_THRESHOLD = 100 * 1024 * 1024;
 const PART_SIZE = 32 * 1024 * 1024;
 
 export async function presignUpload(key: string, contentType: string, expiresIn = 3600) {
-  return getSignedUrl(client(), new PutObjectCommand({ Bucket: bucket(), Key: key, ContentType: contentType }), { expiresIn });
+  return getSignedUrl(await client(), new PutObjectCommand({ Bucket: await bucket(), Key: key, ContentType: contentType }), { expiresIn });
 }
 export async function beginMultipart(key: string, contentType: string) {
-  const r = await client().send(new CreateMultipartUploadCommand({ Bucket: bucket(), Key: key, ContentType: contentType }));
+  const r = await (await client()).send(new CreateMultipartUploadCommand({ Bucket: await bucket(), Key: key, ContentType: contentType }));
   if (!r.UploadId) throw new Error("R2 returned no UploadId");
   return r.UploadId;
 }
 export async function presignPart(key: string, uploadId: string, partNumber: number) {
-  return getSignedUrl(client(), new UploadPartCommand({ Bucket: bucket(), Key: key, UploadId: uploadId, PartNumber: partNumber }), { expiresIn: 6 * 3600 });
+  return getSignedUrl(await client(), new UploadPartCommand({ Bucket: await bucket(), Key: key, UploadId: uploadId, PartNumber: partNumber }), { expiresIn: 6 * 3600 });
 }
 export async function completeMultipart(key: string, uploadId: string, parts: { ETag: string; PartNumber: number }[]) {
-  await client().send(new CompleteMultipartUploadCommand({ Bucket: bucket(), Key: key, UploadId: uploadId, MultipartUpload: { Parts: parts.sort((a, b) => a.PartNumber - b.PartNumber) } }));
+  await (await client()).send(new CompleteMultipartUploadCommand({ Bucket: await bucket(), Key: key, UploadId: uploadId, MultipartUpload: { Parts: parts.sort((a, b) => a.PartNumber - b.PartNumber) } }));
 }
 export async function abortMultipart(key: string, uploadId: string) {
-  await client().send(new AbortMultipartUploadCommand({ Bucket: bucket(), Key: key, UploadId: uploadId }));
+  await (await client()).send(new AbortMultipartUploadCommand({ Bucket: await bucket(), Key: key, UploadId: uploadId }));
 }
 export const uploadPlan = { MULTIPART_THRESHOLD, PART_SIZE };
 
 export async function presignDownload(key: string, downloadFilename?: string, expiresIn = 900) {
   const cmd = new GetObjectCommand({
-    Bucket: bucket(), Key: key,
+    Bucket: await bucket(), Key: key,
     ResponseContentDisposition: downloadFilename ? `attachment; filename="${downloadFilename.replace(/"/g, "")}"` : undefined,
   });
-  return getSignedUrl(client(), cmd, { expiresIn });
+  return getSignedUrl(await client(), cmd, { expiresIn });
 }
 
 export async function getObject(key: string) {
-  const r = await client().send(new GetObjectCommand({ Bucket: bucket(), Key: key }));
+  const r = await (await client()).send(new GetObjectCommand({ Bucket: await bucket(), Key: key }));
   return r.Body as any;
 }
 export async function putObject(key: string, body: Buffer, contentType: string) {
-  await client().send(new PutObjectCommand({ Bucket: bucket(), Key: key, Body: body, ContentType: contentType, CacheControl: "public, max-age=31536000, immutable" }));
+  await (await client()).send(new PutObjectCommand({ Bucket: await bucket(), Key: key, Body: body, ContentType: contentType, CacheControl: "public, max-age=31536000, immutable" }));
 }
 export async function deleteObject(key: string) {
-  await client().send(new DeleteObjectCommand({ Bucket: bucket(), Key: key }));
+  await (await client()).send(new DeleteObjectCommand({ Bucket: await bucket(), Key: key }));
 }
 export async function objectExists(key: string) {
-  try { await client().send(new HeadObjectCommand({ Bucket: bucket(), Key: key })); return true; } catch { return false; }
+  try { await (await client()).send(new HeadObjectCommand({ Bucket: await bucket(), Key: key })); return true; } catch { return false; }
 }
 
 // Stream an object's body straight from R2 (used by the zip route). Keeps the
 // s3 client + bucket name private to this module.
 export async function getObjectStream(key: string): Promise<any> {
-  const r = await client().send(new GetObjectCommand({ Bucket: bucket(), Key: key }));
+  const r = await (await client()).send(new GetObjectCommand({ Bucket: await bucket(), Key: key }));
   return r.Body;
 }
 
 export async function getObjectHead(key: string, bytes = 64): Promise<Buffer> {
-  const r = await client().send(new GetObjectCommand({ Bucket: bucket(), Key: key, Range: `bytes=0-${bytes - 1}` }));
+  const r = await (await client()).send(new GetObjectCommand({ Bucket: await bucket(), Key: key, Range: `bytes=0-${bytes - 1}` }));
   const chunks: Buffer[] = [];
   for await (const c of r.Body as any) chunks.push(Buffer.from(c));
   return Buffer.concat(chunks);

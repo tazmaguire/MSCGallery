@@ -25,7 +25,7 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
   const [albums, setAlbums] = useState<any[]>([]); const [active, setActive] = useState<string | null>(null);
   const [assets, setAssets] = useState<any[]>([]); const [sel, setSel] = useState<Set<string>>(new Set());
   const [links, setLinks] = useState<any[]>([]);
-  const [panel, setPanel] = useState<null | "links" | "newAlbum" | "brand" | "qr" | "editCredit" | "access" | "tags">(null);
+  const [panel, setPanel] = useState<null | "links" | "newAlbum" | "brand" | "qr" | "editCredit" | "access" | "tags" | "renameGallery" | "renameAlbum">(null);
   const [qrToken, setQrToken] = useState<string>("");
   const [uploading, setUploading] = useState(false);
   const [proQueue, setProQueue] = useState<ProUploadItem[]>([]);
@@ -122,7 +122,10 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
     <div className="mx-auto max-w-7xl px-4 py-6" style={style}>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="display text-3xl">{gallery.name}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="display text-3xl">{gallery.name}</h1>
+            <button onClick={() => setPanel("renameGallery")} className="text-[var(--text-3)] hover:text-[var(--text)]" title="Rename gallery"><Pencil size={15} /></button>
+          </div>
           <p className="data text-[var(--text-2)]">
             {gallery.short_code} · /g/{gallery.slug}
             {storageBytes !== undefined && (
@@ -180,6 +183,7 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
               <input value={proCreditName} onChange={e => setProCreditName(e.target.value)} placeholder="Attributed to (default: Official)" className="w-52 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)]" />
               <input value={proCreditLink} onChange={e => setProCreditLink(e.target.value)} placeholder="Their link (optional)" className="w-52 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)]" />
             </>}
+            <button onClick={() => setPanel("renameAlbum")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Pencil size={15} />Rename album</button>
             <a href={`/g/${gallery.slug}/download?album=${album.slug}`} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Download size={15} />Download album</a>
             {!album.is_guest_album && <button onClick={() => fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: album.id, is_private: !album.is_private }) }).then(loadAlbums)} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm">{album.is_private ? <><Lock size={15} />Private</> : <><Eye size={15} />Public</>}</button>}
           </div>
@@ -279,6 +283,10 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
         contributorCount={new Set([...sel].map(id => assets.find(a => a.id === id)?.contributor).filter(Boolean)).size}
         onClose={() => setPanel(null)} onDone={() => { setPanel(null); setSel(new Set()); loadAssets(); }} assetIds={[...sel]} />}
       {panel === "tags" && <TagsModal assetId={[...sel][0]} onClose={() => setPanel(null)} />}
+      {panel === "renameGallery" && <RenameModal title="Rename gallery" initial={gallery.name} onClose={() => setPanel(null)}
+        onSave={async (name) => { await fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: gallery.id, name }) }); setPanel(null); location.reload(); }} />}
+      {panel === "renameAlbum" && album && <RenameModal title="Rename album" initial={album.name} onClose={() => setPanel(null)}
+        onSave={async (name) => { await fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: album.id, name }) }); setPanel(null); loadAlbums(); }} />}
     </div>
   );
 }
@@ -471,6 +479,18 @@ function EditCreditModal({ current, assetIds, contributorCount, onClose, onDone 
       <input value={link} onChange={e => setLink(e.target.value)} placeholder="https://…" className="mb-1.5 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
       <p className="data mb-4 text-[var(--text-3)]">Shows as a small link next to "Shot by {name || "…"}" on the public gallery. Leave blank to remove it.</p>
       {err && <p className="data mb-3 text-[var(--brand)]">{err}</p>}
+      <button onClick={save} disabled={busy || !name.trim()} className="btn-primary w-full py-2.5 disabled:opacity-30">{busy ? "Saving…" : "Save"}</button>
+    </Modal>
+  );
+}
+function RenameModal({ title, initial, onClose, onSave }: any) {
+  const [name, setName] = useState(initial || "");
+  const [busy, setBusy] = useState(false);
+  const save = async () => { setBusy(true); try { await onSave(name.trim()); } finally { setBusy(false); } };
+  return (
+    <Modal title={title} onClose={onClose}>
+      <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === "Enter" && name.trim() && save()} autoFocus
+        className="mb-4 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
       <button onClick={save} disabled={busy || !name.trim()} className="btn-primary w-full py-2.5 disabled:opacity-30">{busy ? "Saving…" : "Save"}</button>
     </Modal>
   );

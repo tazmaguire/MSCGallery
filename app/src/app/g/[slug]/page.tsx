@@ -33,19 +33,32 @@ export default async function P({ params }: { params: { slug: string } }) {
     galleryCoverThumb = gc?.k || null;
   } catch {}
   const withPhotos = albums.filter((a: any) => Number(a.count) > 0);
-  const rows = await q(
-    `SELECT a.id, a.kind, a.width, a.height, a.taken_at, a.public_key, a.album_id, a.thumb_key, a.preview_key, a.poster_key, a.contributor_id,
-            COALESCE(c.credit_line, c.display_name) AS contributor_name, c.first_name,
-            row_number() OVER (PARTITION BY a.album_id ORDER BY a.taken_at, a.created_at) AS seq
-     FROM assets a JOIN contributors c ON c.id=a.contributor_id JOIN albums al ON al.id=a.album_id
-     WHERE a.gallery_id=$1 AND a.visibility='visible' AND a.status='ready' AND al.is_private=false AND a.deletion_status IS NULL
-     ORDER BY a.taken_at DESC NULLS LAST, a.created_at DESC`, [g.id]);
+  let rows;
+  try {
+    rows = await q(
+      `SELECT a.id, a.kind, a.width, a.height, a.taken_at, a.public_key, a.album_id, a.thumb_key, a.preview_key, a.poster_key, a.contributor_id,
+              COALESCE(c.credit_line, c.display_name) AS contributor_name, c.first_name, c.link_url AS contributor_link,
+              row_number() OVER (PARTITION BY a.album_id ORDER BY a.taken_at, a.created_at) AS seq
+       FROM assets a JOIN contributors c ON c.id=a.contributor_id JOIN albums al ON al.id=a.album_id
+       WHERE a.gallery_id=$1 AND a.visibility='visible' AND a.status='ready' AND al.is_private=false AND a.deletion_status IS NULL
+       ORDER BY a.taken_at DESC NULLS LAST, a.created_at DESC`, [g.id]);
+  } catch {
+    // db/010_contributor_link.sql not applied yet.
+    rows = await q(
+      `SELECT a.id, a.kind, a.width, a.height, a.taken_at, a.public_key, a.album_id, a.thumb_key, a.preview_key, a.poster_key, a.contributor_id,
+              COALESCE(c.credit_line, c.display_name) AS contributor_name, c.first_name,
+              row_number() OVER (PARTITION BY a.album_id ORDER BY a.taken_at, a.created_at) AS seq
+       FROM assets a JOIN contributors c ON c.id=a.contributor_id JOIN albums al ON al.id=a.album_id
+       WHERE a.gallery_id=$1 AND a.visibility='visible' AND a.status='ready' AND al.is_private=false AND a.deletion_status IS NULL
+       ORDER BY a.taken_at DESC NULLS LAST, a.created_at DESC`, [g.id]);
+  }
   const assetsByAlbum: Record<string, any[]> = {}; const cc = new Map<string, any>();
   for (const r of rows) {
     const ext = r.kind === "video" ? "mp4" : "jpg";
     const fn = downloadFilename({ shortCode: g.short_code, location: g.location, contributor: r.contributor_name, seq: Number(r.seq), ext });
     const a = { id: r.id, kind: r.kind, width: r.width, height: r.height, contributor_id: r.contributor_id,
-      firstName: r.first_name || firstName(r.contributor_name), download_filename: fn, download_url: `/d/${r.id}`,
+      firstName: r.first_name || firstName(r.contributor_name), contributorLink: r.contributor_link || null,
+      download_filename: fn, download_url: `/d/${r.id}`,
       thumb: `/thumbs/thumb/${r.thumb_key}`, preview: `/thumbs/preview/${r.preview_key || r.poster_key}` };
     (assetsByAlbum[r.album_id] ||= []).push(a);
     const c = cc.get(r.contributor_id) ?? { id: r.contributor_id, name: r.first_name || firstName(r.contributor_name), count: 0 }; c.count++; cc.set(r.contributor_id, c);

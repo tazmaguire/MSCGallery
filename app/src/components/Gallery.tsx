@@ -5,12 +5,12 @@
  * covers → photos. Downloads at photo / album / gallery. "Shot by Sarah".
  */
 import { useState, useMemo, useEffect, useRef } from "react";
-import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2 } from "lucide-react";
+import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2, ExternalLink } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import SiteHeader from "@/components/SiteHeader";
 import type { DisplayMode } from "@/lib/siteIdentity";
 
-type Asset = { id: string; kind: "photo" | "video"; width: number; height: number; contributor_id: string; firstName: string; download_filename: string; download_url: string; thumb: string; preview: string };
+type Asset = { id: string; kind: "photo" | "video"; width: number; height: number; contributor_id: string; firstName: string; contributorLink: string | null; download_filename: string; download_url: string; thumb: string; preview: string };
 type Album = { id: string; name: string; slug: string; cover: string | null; count: number };
 
 // Swaps a broken thumbnail/preview <img> for an inline placeholder instead of
@@ -36,6 +36,13 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
   const [openAlbum, setOpenAlbum] = useState<string | null>(single ? albums[0]?.id : null);
   const [lb, setLb] = useState<{ album: string; i: number } | null>(null);
   const style = { ["--brand" as any]: brand.primary, ["--accent" as any]: brand.accent } as React.CSSProperties;
+
+  // Click a "SHOT BY" name to see just that person's photos in this album;
+  // an obvious, dedicated way to clear it again lives right above the grid
+  // — no toggling-by-reclicking, so the two actions (filter / clear) never
+  // get confused with each other.
+  const [filterContributor, setFilterContributor] = useState<{ id: string; name: string } | null>(null);
+  useEffect(() => { setFilterContributor(null); }, [openAlbum]);
 
   // Cart — pick individual photos across albums, download just those later.
   // Lives in localStorage, scoped to this gallery, so it survives a refresh.
@@ -77,8 +84,13 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
   // (asset_tags, api/gallery/[slug]/search) stays in place for when it is.
 
   const album = albums.find((a) => a.id === openAlbum) || null;
-  const assets = openAlbum ? assetsByAlbum[openAlbum] || [] : [];
-  const lbList = lb ? assetsByAlbum[lb.album] || [] : [];
+  const albumAssets = openAlbum ? assetsByAlbum[openAlbum] || [] : [];
+  const assets = filterContributor ? albumAssets.filter((a) => a.contributor_id === filterContributor.id) : albumAssets;
+  // Once a filter's active, paging through the lightbox stays within it too —
+  // "browsing Sarah's photos" shouldn't suddenly show everyone else's.
+  const lbList = lb
+    ? (filterContributor ? (assetsByAlbum[lb.album] || []).filter((a) => a.contributor_id === filterContributor.id) : assetsByAlbum[lb.album] || [])
+    : [];
   const current = lb ? lbList[lb.i] : null;
 
   useEffect(() => {
@@ -151,6 +163,11 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
                 <h1 className="display truncate text-3xl sm:text-4xl">{album.name}</h1>
                 <p className="data mt-0.5 text-[var(--text-2)]">{album.count} photos</p>
               </div>
+              {filterContributor && (
+                <button onClick={() => setFilterContributor(null)} className="flex shrink-0 items-center gap-2 rounded-full bg-[var(--surface-2)] px-3 py-1.5 text-sm transition hover:bg-[var(--border)]">
+                  Shot by {filterContributor.name} <X size={13} />
+                </button>
+              )}
             </div>
           </div>
         </header>
@@ -191,7 +208,10 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
                   {cart.has(a.id) ? <Check size={15} /> : <ShoppingCart size={15} />}
                 </button>
                 <button onClick={(e) => { e.stopPropagation(); dl(a.download_url, a.download_filename); }} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/40 text-white/90 opacity-0 backdrop-blur transition group-hover:opacity-100 focus:opacity-100" title="Download"><Download size={15} /></button>
-                <figcaption className="pointer-events-none absolute bottom-2 left-2 rounded-full bg-black/40 px-2.5 py-1 text-white/90 opacity-0 backdrop-blur transition group-hover:opacity-100"><span className="data text-[11px]">SHOT BY {a.firstName}</span></figcaption>
+                <figcaption className="absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-black/40 py-1 pl-2.5 pr-1.5 text-white/90 opacity-0 backdrop-blur transition group-hover:opacity-100">
+                  <button onClick={(e) => { e.stopPropagation(); setFilterContributor({ id: a.contributor_id, name: a.firstName }); }} className="data text-[11px] hover:underline" title={`See all photos by ${a.firstName}`}>SHOT BY {a.firstName}</button>
+                  {a.contributorLink && <a href={a.contributorLink} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()} title={`${a.firstName}'s link`} className="text-white/70 hover:text-white"><ExternalLink size={11} /></a>}
+                </figcaption>
               </figure>
             ))}
             {!assets.length && <p className="data col-span-full py-24 text-center text-[var(--text-2)]">Nothing here yet.</p>}
@@ -213,7 +233,11 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
           <div className="border-t border-white/15 px-5 py-4">
             <div className="mx-auto flex max-w-3xl flex-col gap-3">
               <div className="flex items-center justify-between">
-                <span className="data text-white/90"><span className="text-white/60">SHOT BY</span> {current.firstName}</span>
+                <span className="data flex items-center gap-1.5 text-white/90">
+                  <span className="text-white/60">SHOT BY</span>
+                  <button onClick={() => { setFilterContributor({ id: current.contributor_id, name: current.firstName }); setLb(null); }} className="hover:underline" title={`See all photos by ${current.firstName}`}>{current.firstName}</button>
+                  {current.contributorLink && <a href={current.contributorLink} target="_blank" rel="noopener" title={`${current.firstName}'s link`} className="text-white/60 hover:text-white"><ExternalLink size={12} /></a>}
+                </span>
                 <span className="data text-white/60">{current.width} × {current.height}</span>
               </div>
               <p className="data text-white/45">You're viewing a preview — download the full-size file below, it's free.</p>

@@ -143,7 +143,12 @@ app/                     Next.js 14 (App Router, TypeScript)
                          → confirmation), ModerationQueue (grid, multi-select,
                          approve-selected/approve-all, gallery filter tabs),
                          GalleryManager (+ delete/edit/cover/tags/bib search,
-                         Access panel: password/unlisted/category — admin-side
+                         Access panel: password/unlisted/category, pro-upload
+                         with attribution name+link and a Drive-style
+                         per-file progress queue (XHR upload with progress,
+                         handles multipart too — admin pro-uploads had no
+                         multipart path before, silently no-op'd on anything
+                         over the ~100MB single-PUT threshold) — admin-side
                          tagging UI stays, only the PUBLIC bib search box was
                          pulled), ThemeToggle, AdminNav (shows the deployed
                          build's git SHA — see below), GalleryList, GalleryGrid
@@ -189,6 +194,11 @@ db/009_video_album.sql  albums.is_video_album — marks each gallery's one
                          first video upload by getOrCreateVideoAlbum(), see
                          src/lib/videoAlbum.ts). Videos are never shown on
                          the public site; see "Video uploads" below.
+db/010_contributor_link.sql contributors.link_url — optional external link
+                         (photographer's site/Instagram) on an "official"
+                         credit, set from GalleryManager's Edit credit panel
+                         or at pro-upload time. Shown as a small icon next
+                         to "SHOT BY <name>" on the public gallery.
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -277,6 +287,27 @@ audit):
 - Admin routes (`api/admin/*`, `/admin/*`) are intentionally exempt — they
   require `getUser()` and are where pending/private content is *supposed* to
   be visible to logged-in staff.
+
+---
+
+## Contributor attribution + click-to-filter
+
+`contributors.link_url` (db/010_contributor_link.sql) is an optional external
+link — a photographer's own site/Instagram — shown as a small icon next to
+"SHOT BY <name>" wherever that appears on the public gallery (grid thumbnail
+hover pill, lightbox). Set from GalleryManager's Edit credit panel, or
+typed alongside the attribution name field next to "Add photos" at pro-upload
+time (blank there just means "Official", same default as before this existed).
+
+Clicking the name itself — not the link icon, a separate click target — sets
+`Gallery.tsx`'s local `filterContributor` state and narrows the current
+album's grid (and lightbox paging) to just that person's photos. This
+replaces the always-visible contributor filter chips removed earlier
+(R6-1) with an on-demand version: nothing shows until a name is clicked, and
+a dedicated pill next to the album title ("Shot by X ✕") is the only way to
+clear it — never a second click on the same name, so filter-on and filter-off
+are never the same gesture. The filter resets automatically on switching
+albums (`useEffect` on `openAlbum`).
 
 ---
 

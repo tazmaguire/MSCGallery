@@ -10,7 +10,8 @@ export default async function EmbedAll() {
     g = await q(
       `SELECT gal.id, gal.slug, gal.name, gal.event_date, gal.location, gal.brand, gc.name AS category_name
        FROM galleries gal LEFT JOIN gallery_categories gc ON gc.id=gal.category_id
-       WHERE gal.is_published AND NOT gal.is_unlisted ORDER BY gc.sort_order NULLS LAST, gc.name NULLS LAST, gal.event_date DESC NULLS LAST`);
+       WHERE gal.is_published AND NOT gal.is_unlisted
+       ORDER BY gc.sort_order NULLS LAST, gc.name NULLS LAST, gal.sort_order, gal.event_date DESC NULLS LAST`);
   } catch {
     g = await q(`SELECT id, slug, name, event_date, location, brand FROM galleries WHERE is_published ORDER BY event_date DESC NULLS LAST`);
   }

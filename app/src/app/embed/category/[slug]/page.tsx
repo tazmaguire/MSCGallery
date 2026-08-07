@@ -11,13 +11,21 @@ export default async function EmbedCategory({ params }: { params: { slug: string
   try {
     [category] = await q(`SELECT * FROM gallery_categories WHERE slug=$1`, [params.slug]);
     if (!category) notFound();
+  } catch {
+    // db/007_config_and_categories.sql not applied yet — no categories exist to embed.
+    notFound();
+  }
+  try {
+    g = await q(
+      `SELECT gal.id, gal.slug, gal.name, gal.event_date, gal.location, gal.brand
+       FROM galleries gal WHERE gal.category_id=$1 AND gal.is_published AND NOT gal.is_unlisted
+       ORDER BY gal.sort_order, gal.event_date DESC NULLS LAST`, [category.id]);
+  } catch {
+    // db/011_gallery_sort_order.sql not applied yet.
     g = await q(
       `SELECT gal.id, gal.slug, gal.name, gal.event_date, gal.location, gal.brand
        FROM galleries gal WHERE gal.category_id=$1 AND gal.is_published AND NOT gal.is_unlisted
        ORDER BY gal.event_date DESC NULLS LAST`, [category.id]);
-  } catch {
-    // db/007_config_and_categories.sql not applied yet — no categories exist to embed.
-    notFound();
   }
   const coverThumb: Record<string, string> = {};
   try {

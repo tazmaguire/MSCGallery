@@ -62,9 +62,20 @@ export async function PATCH(req: NextRequest) {
   // action bar). Both just become a 1-or-more-element `targets` list, so
   // every UPDATE below is a single query either way — no separate bulk path
   // to keep in sync.
-  const { id, ids, brand, upload_terms, is_published, allow_uploads, name, location,
+  const { id, ids, reorder, brand, upload_terms, is_published, allow_uploads, name, location,
           max_files_per_session, max_session_bytes, max_file_bytes, cover_asset_id, view_password,
           category_id, is_unlisted } = await req.json();
+  // Drag-to-reorder (db/011_gallery_sort_order.sql) — a full ordered id list,
+  // not a "same value to many ids" update like everything below, so it's its
+  // own branch: index in the array becomes that gallery's new sort_order.
+  if (reorder?.length) {
+    try {
+      await Promise.all(reorder.map((galleryId: string, i: number) => q(`UPDATE galleries SET sort_order=$2 WHERE id=$1`, [galleryId, i])));
+    } catch {
+      return NextResponse.json({ error: "Couldn't save order — has db/011_gallery_sort_order.sql been applied?" }, { status: 409 });
+    }
+    return NextResponse.json({ ok: true, count: reorder.length });
+  }
   const targets: string[] = ids?.length ? ids : id ? [id] : [];
   if (!targets.length) return NextResponse.json({ error: "No gallery specified." }, { status: 400 });
   if (brand !== undefined) await q(`UPDATE galleries SET brand=$2 WHERE id = ANY($1::uuid[])`, [targets, JSON.stringify(brand)]);

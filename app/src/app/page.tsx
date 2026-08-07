@@ -7,12 +7,18 @@ export default async function Home() {
   const site = await siteConfig();
   let g: any[];
   try {
+    // gal.sort_order (db/011) ahead of event_date: an admin's drag-to-reorder
+    // takes effect once used, but every gallery defaults to sort_order=0, so
+    // untouched galleries just tie-break on event_date exactly as before —
+    // nothing changes here until the admin actually drags something.
     g = await q(
       `SELECT gal.id, gal.slug, gal.name, gal.event_date, gal.location, gal.brand, gc.name AS category_name, gc.sort_order AS category_sort
        FROM galleries gal LEFT JOIN gallery_categories gc ON gc.id=gal.category_id
-       WHERE gal.is_published AND NOT gal.is_unlisted ORDER BY gc.sort_order NULLS LAST, gc.name NULLS LAST, gal.event_date DESC NULLS LAST`);
+       WHERE gal.is_published AND NOT gal.is_unlisted
+       ORDER BY gc.sort_order NULLS LAST, gc.name NULLS LAST, gal.sort_order, gal.event_date DESC NULLS LAST`);
   } catch {
-    // db/007_config_and_categories.sql not applied yet — fall back to no categories/unlisted filter.
+    // db/007_config_and_categories.sql and/or db/011_gallery_sort_order.sql
+    // not applied yet — fall back to no categories/unlisted filter/custom order.
     g = await q(`SELECT id, slug, name, event_date, location, brand FROM galleries WHERE is_published ORDER BY event_date DESC NULLS LAST`);
   }
   // Custom covers (db/002_customisation.sql) — best-effort, see g/[slug]/page.tsx for why.

@@ -1,12 +1,12 @@
 "use client";
 import { useState, useEffect, useMemo } from "react"; import Link from "next/link";
-import { Plus, Eye, EyeOff, Database, CheckSquare, Square, X, EyeOff as Unlist, Eye as List, Tag } from "lucide-react";
+import { Plus, Eye, EyeOff, Database, CheckSquare, Square, X, EyeOff as Unlist, Eye as List, Tag, GripVertical } from "lucide-react";
 import { formatBytes, billedMonthlyCost, formatUSD } from "@/lib/storageCost";
 
-type SortKey = "date_desc" | "date_asc" | "name_asc" | "name_desc";
+type SortKey = "date_desc" | "date_asc" | "name_asc" | "name_desc" | "custom";
 const SORT_LABELS: Record<SortKey, string> = {
   date_desc: "Date (newest first)", date_asc: "Date (oldest first)",
-  name_asc: "Name (A–Z)", name_desc: "Name (Z–A)",
+  name_asc: "Name (A–Z)", name_desc: "Name (Z–A)", custom: "Custom order (drag to reorder)",
 };
 
 export default function GalleryList({ isOwner }: { isOwner: boolean }) {
@@ -16,6 +16,7 @@ export default function GalleryList({ isOwner }: { isOwner: boolean }) {
   const [categories, setCategories] = useState<any[]>([]);
   const [bulkCategory, setBulkCategory] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [dragId, setDragId] = useState<string | null>(null);
   const load = () => fetch("/api/admin/galleries").then(r => r.json()).then(d => setG(d.galleries));
   useEffect(() => { load(); fetch("/api/admin/categories").then(r => r.json()).then(d => setCategories(d.categories || [])); }, []);
   const toggle = (x: any) => fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: x.id, is_published: !x.is_published }) }).then(load);
@@ -23,12 +24,13 @@ export default function GalleryList({ isOwner }: { isOwner: boolean }) {
 
   const sorted = useMemo(() => {
     const withDate = g.filter(x => x.event_date); const noDate = g.filter(x => !x.event_date);
-    const cmp: Record<SortKey, (a: any, b: any) => number> = {
+    const cmp: Record<Exclude<SortKey, "custom">, (a: any, b: any) => number> = {
       date_desc: (a, b) => +new Date(b.event_date) - +new Date(a.event_date),
       date_asc: (a, b) => +new Date(a.event_date) - +new Date(b.event_date),
       name_asc: (a, b) => a.name.localeCompare(b.name),
       name_desc: (a, b) => b.name.localeCompare(a.name),
     };
+    if (sort === "custom") return [...g].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     if (sort === "name_asc" || sort === "name_desc") return [...g].sort(cmp[sort]);
     // Date sorts: undated galleries always sort last, regardless of direction.
     return [...withDate.sort(cmp[sort]), ...noDate.sort((a, b) => a.name.localeCompare(b.name))];
@@ -37,6 +39,20 @@ export default function GalleryList({ isOwner }: { isOwner: boolean }) {
   const selectAll = () => setSel(new Set(sorted.map(x => x.id)));
   const deselectAll = () => setSel(new Set());
   const toggleSel = (id: string) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  // Drag-to-reorder — only active in "Custom order" mode. Reorders the local
+  // list immediately (by rewriting sort_order so the useMemo above reflects
+  // it without waiting on a refetch), then persists in the background.
+  const reorderTo = async (draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+    const ids = sorted.map(x => x.id);
+    const from = ids.indexOf(draggedId), to = ids.indexOf(targetId);
+    if (from === -1 || to === -1) return;
+    const next = [...ids]; next.splice(from, 1); next.splice(to, 0, draggedId);
+    const order = new Map(next.map((gid, i) => [gid, i]));
+    setG(gs => gs.map(x => ({ ...x, sort_order: order.get(x.id) ?? x.sort_order })));
+    await fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ reorder: next }) });
+  };
 
   const bulkPatch = async (body: any) => {
     setBulkBusy(true);
@@ -79,7 +95,15 @@ export default function GalleryList({ isOwner }: { isOwner: boolean }) {
 
       <div className={`space-y-2 ${sel.size > 0 ? "pb-20" : "pb-4"}`}>
         {sorted.map(x => (
-          <div key={x.id} className={`card flex items-center gap-3 p-4 ${sel.has(x.id) ? "border-[var(--accent)]" : ""}`}>
+          <div key={x.id}
+            onDragOver={e => sort === "custom" && e.preventDefault()}
+            onDrop={() => sort === "custom" && dragId && reorderTo(dragId, x.id)}
+            className={`card flex items-center gap-3 p-4 ${sel.has(x.id) ? "border-[var(--accent)]" : ""}`}>
+            {sort === "custom" && (
+              <span draggable onDragStart={() => setDragId(x.id)} onDragEnd={() => setDragId(null)} className="shrink-0 cursor-grab text-[var(--text-3)] hover:text-[var(--text)] active:cursor-grabbing" title="Drag to reorder">
+                <GripVertical size={16} />
+              </span>
+            )}
             <button onClick={() => toggleSel(x.id)} className="shrink-0 text-[var(--text-3)] hover:text-[var(--text)]" title={sel.has(x.id) ? "Deselect" : "Select"}>
               {sel.has(x.id) ? <CheckSquare size={18} className="text-[var(--accent)]" /> : <Square size={18} />}
             </button>

@@ -5,6 +5,22 @@ import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link
 import { DISPLAY_FONTS, BODY_FONTS, MONO_FONTS } from "@/lib/fonts";
 import { formatBytes, flatMonthlyCost, formatUSD } from "@/lib/storageCost";
 
+type ProUploadItem = { id: string; name: string; bytes: number; progress: number; status: "queued" | "uploading" | "done" | "error"; error?: string };
+const PRO_PARALLEL_PARTS = 4;
+
+// Duplicated from Uploader.tsx (the guest uploader) rather than shared —
+// deliberately not touching that component, which is the security-sensitive
+// guest-facing upload path. Same XHR-for-progress approach either way.
+function putWithProgress(url: string, body: Blob, onProgress: (pct: number) => void): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest(); x.open("PUT", url);
+    x.upload.onprogress = (e) => e.lengthComputable && onProgress(Math.round((e.loaded / e.total) * 100));
+    x.onload = () => (x.status >= 200 && x.status < 300) ? resolve((x.getResponseHeader("ETag") || "").replace(/"/g, "")) : reject(new Error(`Upload failed (${x.status})`));
+    x.onerror = () => reject(new Error("Couldn't reach storage. Please try again."));
+    x.send(body);
+  });
+}
+
 export default function GalleryManager({ gallery, isOwner, storageBytes }: { gallery: any; isOwner: boolean; storageBytes?: number }) {
   const [albums, setAlbums] = useState<any[]>([]); const [active, setActive] = useState<string | null>(null);
   const [assets, setAssets] = useState<any[]>([]); const [sel, setSel] = useState<Set<string>>(new Set());
@@ -12,6 +28,10 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
   const [panel, setPanel] = useState<null | "links" | "newAlbum" | "brand" | "qr" | "editCredit" | "access" | "tags">(null);
   const [qrToken, setQrToken] = useState<string>("");
   const [uploading, setUploading] = useState(false);
+  const [proQueue, setProQueue] = useState<ProUploadItem[]>([]);
+  const [showProQueue, setShowProQueue] = useState(false);
+  const [proCreditName, setProCreditName] = useState("");
+  const [proCreditLink, setProCreditLink] = useState("");
   const [bibSearch, setBibSearch] = useState("");
   const [bibResults, setBibResults] = useState<any[] | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -25,13 +45,45 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
   const album = albums.find(a => a.id === active);
 
   const uploadPro = async (files: FileList) => {
-    if (!active) return; setUploading(true);
-    for (const file of Array.from(files)) {
+    if (!active) return;
+    const fileArr = Array.from(files);
+    const items: ProUploadItem[] = fileArr.map((f) => ({ id: crypto.randomUUID(), name: f.name, bytes: f.size, progress: 0, status: "queued" }));
+    setProQueue(items); setShowProQueue(true); setUploading(true);
+    const patch = (id: string, p: Partial<ProUploadItem>) => setProQueue((q) => q.map((x) => (x.id === id ? { ...x, ...p } : x)));
+
+    for (let i = 0; i < fileArr.length; i++) {
+      const file = fileArr[i]; const id = items[i].id;
+      patch(id, { status: "uploading" });
       try {
-        const pres = await fetch("/api/admin/ingest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ albumId: active, filename: file.name, contentType: file.type, bytes: file.size }) });
+        const pres = await fetch("/api/admin/ingest", { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ albumId: active, contributorName: proCreditName.trim() || undefined, creditLink: proCreditLink.trim() || undefined, filename: file.name, contentType: file.type, bytes: file.size }) });
         const plan = await pres.json();
-        if (plan.mode === "single") { await fetch(plan.url, { method: "PUT", body: file, headers: { "content-type": file.type } }); await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId }) }); }
-      } catch {}
+        if (!pres.ok) throw new Error(plan.error || "Couldn't start upload.");
+        if (plan.mode === "single") {
+          await putWithProgress(plan.url, file, (p) => patch(id, { progress: p }));
+          await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId }) });
+        } else {
+          // Multipart (files over the single-PUT threshold — routine for video).
+          const parts: { ETag: string; PartNumber: number }[] = []; const done = new Array(plan.urls.length).fill(0);
+          const uploadPart = async (idx: number) => {
+            const chunk = file.slice(idx * plan.partSize, (idx + 1) * plan.partSize);
+            const etag = await putWithProgress(plan.urls[idx], chunk, (p) => {
+              done[idx] = (p / 100) * chunk.size;
+              patch(id, { progress: Math.round((done.reduce((a, b) => a + b, 0) / file.size) * 100) });
+            });
+            parts.push({ ETag: etag, PartNumber: idx + 1 });
+          };
+          const remaining = plan.urls.map((_: any, idx: number) => idx);
+          await Promise.all(Array.from({ length: PRO_PARALLEL_PARTS }, async () => {
+            for (;;) { const idx = remaining.shift(); if (idx === undefined) return; await uploadPart(idx); }
+          }));
+          parts.sort((a, b) => a.PartNumber - b.PartNumber);
+          await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId, uploadId: plan.uploadId, parts }) });
+        }
+        patch(id, { status: "done", progress: 100 });
+      } catch (e: any) {
+        patch(id, { status: "error", error: e.message || "Upload failed" });
+      }
     }
     setUploading(false); setTimeout(loadAssets, 1500);
   };
@@ -107,13 +159,44 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
       </div>
 
       {album && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          {!album.is_guest_album && <>
-            <button onClick={() => fileRef.current?.click()} disabled={uploading} className="btn-primary flex items-center gap-2 px-3 py-2 text-sm disabled:opacity-50">{uploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}Add photos</button>
-            <input ref={fileRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={e => e.target.files && uploadPro(e.target.files)} />
-          </>}
-          <a href={`/g/${gallery.slug}/download?album=${album.slug}`} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Download size={15} />Download album</a>
-          {!album.is_guest_album && <button onClick={() => fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: album.id, is_private: !album.is_private }) }).then(loadAlbums)} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm">{album.is_private ? <><Lock size={15} />Private</> : <><Eye size={15} />Public</>}</button>}
+        <div className="mb-4 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {!album.is_guest_album && <>
+              <button onClick={() => fileRef.current?.click()} disabled={uploading} className="btn-primary flex items-center gap-2 px-3 py-2 text-sm disabled:opacity-50">{uploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}Add photos</button>
+              <input ref={fileRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={e => e.target.files && uploadPro(e.target.files)} />
+              <input value={proCreditName} onChange={e => setProCreditName(e.target.value)} placeholder="Attributed to (default: Official)" className="w-52 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)]" />
+              <input value={proCreditLink} onChange={e => setProCreditLink(e.target.value)} placeholder="Their link (optional)" className="w-52 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)]" />
+            </>}
+            <a href={`/g/${gallery.slug}/download?album=${album.slug}`} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Download size={15} />Download album</a>
+            {!album.is_guest_album && <button onClick={() => fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: album.id, is_private: !album.is_private }) }).then(loadAlbums)} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm">{album.is_private ? <><Lock size={15} />Private</> : <><Eye size={15} />Public</>}</button>}
+          </div>
+          {!album.is_guest_album && <p className="data text-[var(--text-3)]">Applies to whatever you add next — change it any time before clicking Add photos again.</p>}
+        </div>
+      )}
+
+      {showProQueue && (
+        <div className="fixed bottom-4 left-4 z-40 w-80 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
+          <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
+            <span className="data text-[var(--text-2)]">
+              Uploading {proQueue.filter(x => x.status === "done").length}/{proQueue.length}
+            </span>
+            <button onClick={() => setShowProQueue(false)} className="p-0.5 text-[var(--text-3)] hover:text-[var(--text)]"><X size={14} /></button>
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            {proQueue.map(item => (
+              <div key={item.id} className="border-b border-[var(--border)] px-3 py-2 last:border-0">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="data truncate text-[var(--text-2)]">{item.name}</span>
+                  {item.status === "done" && <Check size={13} className="shrink-0 text-emerald-400" />}
+                  {item.status === "error" && <span className="data shrink-0 text-[var(--brand)]" title={item.error}>Failed</span>}
+                  {(item.status === "uploading" || item.status === "queued") && <span className="data shrink-0 text-[var(--text-3)]">{item.progress}%</span>}
+                </div>
+                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[var(--bg-2)]">
+                  <div className={`h-full transition-all ${item.status === "error" ? "bg-[var(--brand)]" : item.status === "done" ? "bg-emerald-400" : "bg-[var(--accent)]"}`} style={{ width: `${item.status === "queued" ? 0 : item.progress}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -330,11 +413,26 @@ function TagsModal({ assetId, onClose }: any) {
 }
 function EditCreditModal({ current, assetIds, onClose, onDone }: any) {
   const [name, setName] = useState(current?.contributor || "");
+  const [link, setLink] = useState(current?.contributor_link || "");
+  const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true); setErr("");
+    try {
+      const r = await fetch("/api/admin/assets", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds, creditName: name, creditLink: link }) });
+      if (!r.ok) { setErr((await r.json().catch(() => ({}))).error || "Couldn't save."); return; }
+      onDone();
+    } finally { setBusy(false); }
+  };
   return (
     <Modal title="Edit credit" onClose={onClose}>
-      <p className="data mb-3 text-[var(--text-3)]">Renames the credited contributor everywhere — including their other photos in this gallery.</p>
-      <input value={name} onChange={e => setName(e.target.value)} placeholder="Full name" className="mb-4 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
-      <button onClick={() => fetch("/api/admin/assets", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds, creditName: name }) }).then(onDone)} disabled={!name.trim()} className="btn-primary w-full py-2.5 disabled:opacity-30">Save</button>
+      <p className="data mb-3 text-[var(--text-3)]">Applies to this contributor everywhere — including their other photos in this gallery.</p>
+      <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Name</label>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="Full name" className="mb-3 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
+      <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Link <span className="font-normal text-[var(--text-3)]">(optional — their site, Instagram, portfolio)</span></label>
+      <input value={link} onChange={e => setLink(e.target.value)} placeholder="https://…" className="mb-1.5 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
+      <p className="data mb-4 text-[var(--text-3)]">Shows as a small link next to "Shot by {name || "…"}" on the public gallery. Leave blank to remove it.</p>
+      {err && <p className="data mb-3 text-[var(--brand)]">{err}</p>}
+      <button onClick={save} disabled={busy || !name.trim()} className="btn-primary w-full py-2.5 disabled:opacity-30">{busy ? "Saving…" : "Save"}</button>
     </Modal>
   );
 }

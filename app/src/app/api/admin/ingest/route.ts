@@ -6,12 +6,27 @@ import { storedFilename, firstName } from "@/lib/naming";
 import { getOrCreateVideoAlbum } from "@/lib/videoAlbum";
 export async function POST(req: NextRequest) {
   const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
-  const { albumId, contributorName, filename, contentType, bytes } = await req.json();
+  const { albumId, contributorName, creditLink, filename, contentType, bytes } = await req.json();
   const [al] = await q(`SELECT al.id, g.slug, g.id AS gallery_id FROM albums al JOIN galleries g ON g.id=al.gallery_id WHERE al.id=$1`, [albumId]);
   if (!al) return NextResponse.json({ error: "Unknown album." }, { status: 404 });
   const nm = (contributorName || "Official").trim();
+  const link = creditLink?.trim() || null;
   const [ex] = await q(`SELECT id FROM contributors WHERE is_guest=false AND lower(display_name)=lower($1) LIMIT 1`, [nm]);
-  const cid = ex?.id ?? (await q(`INSERT INTO contributors (display_name, first_name, is_guest) VALUES ($1,$2,false) RETURNING id`, [nm, firstName(nm)]))[0].id;
+  let cid: string;
+  if (ex) {
+    cid = ex.id;
+    // A link typed this upload updates the existing contributor's; leaving
+    // it blank doesn't clear one set earlier — same "blank = unchanged"
+    // convention as the gallery password field. Best-effort: db/010_contributor_link.sql
+    // not applied yet just means the link is silently skipped, not a failed upload.
+    if (link) { try { await q(`UPDATE contributors SET link_url=$2 WHERE id=$1`, [cid, link]); } catch {} }
+  } else {
+    try {
+      cid = (await q(`INSERT INTO contributors (display_name, first_name, is_guest, link_url) VALUES ($1,$2,false,$3) RETURNING id`, [nm, firstName(nm), link]))[0].id;
+    } catch {
+      cid = (await q(`INSERT INTO contributors (display_name, first_name, is_guest) VALUES ($1,$2,false) RETURNING id`, [nm, firstName(nm)]))[0].id;
+    }
+  }
   const kind = /^video\//.test(contentType) ? "video" : "photo";
   // Videos are never shown on the public site — routed into a hidden
   // admin-only album regardless of which album was open in the admin UI

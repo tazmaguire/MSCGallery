@@ -57,30 +57,38 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
-  const { id, brand, upload_terms, is_published, allow_uploads, name, location,
+  // Accepts a single `id` (existing per-gallery callers: the Access modal,
+  // branding, etc — unchanged) or an `ids` array (the galleries list's bulk
+  // action bar). Both just become a 1-or-more-element `targets` list, so
+  // every UPDATE below is a single query either way — no separate bulk path
+  // to keep in sync.
+  const { id, ids, brand, upload_terms, is_published, allow_uploads, name, location,
           max_files_per_session, max_session_bytes, max_file_bytes, cover_asset_id, view_password,
           category_id, is_unlisted } = await req.json();
-  if (brand !== undefined) await q(`UPDATE galleries SET brand=$2 WHERE id=$1`, [id, JSON.stringify(brand)]);
-  if (upload_terms !== undefined) await q(`UPDATE galleries SET upload_terms=$2 WHERE id=$1`, [id, upload_terms]);
-  if (is_published !== undefined) await q(`UPDATE galleries SET is_published=$2 WHERE id=$1`, [id, is_published]);
-  if (allow_uploads !== undefined) await q(`UPDATE galleries SET allow_uploads=$2 WHERE id=$1`, [id, allow_uploads]);
-  if (name) await q(`UPDATE galleries SET name=$2 WHERE id=$1`, [id, name]);
-  if (location !== undefined) await q(`UPDATE galleries SET location=$2 WHERE id=$1`, [id, location]);
-  if (max_files_per_session) await q(`UPDATE galleries SET max_files_per_session=$2 WHERE id=$1`, [id, max_files_per_session]);
-  if (max_session_bytes) await q(`UPDATE galleries SET max_session_bytes=$2 WHERE id=$1`, [id, max_session_bytes]);
-  if (max_file_bytes) await q(`UPDATE galleries SET max_file_bytes=$2 WHERE id=$1`, [id, max_file_bytes]);
-  if (cover_asset_id !== undefined) await q(`UPDATE galleries SET cover_asset_id=$2 WHERE id=$1`, [id, cover_asset_id]);
+  const targets: string[] = ids?.length ? ids : id ? [id] : [];
+  if (!targets.length) return NextResponse.json({ error: "No gallery specified." }, { status: 400 });
+  if (brand !== undefined) await q(`UPDATE galleries SET brand=$2 WHERE id = ANY($1::uuid[])`, [targets, JSON.stringify(brand)]);
+  if (upload_terms !== undefined) await q(`UPDATE galleries SET upload_terms=$2 WHERE id = ANY($1::uuid[])`, [targets, upload_terms]);
+  if (is_published !== undefined) await q(`UPDATE galleries SET is_published=$2 WHERE id = ANY($1::uuid[])`, [targets, is_published]);
+  if (allow_uploads !== undefined) await q(`UPDATE galleries SET allow_uploads=$2 WHERE id = ANY($1::uuid[])`, [targets, allow_uploads]);
+  if (name) await q(`UPDATE galleries SET name=$2 WHERE id = ANY($1::uuid[])`, [targets, name]);
+  if (location !== undefined) await q(`UPDATE galleries SET location=$2 WHERE id = ANY($1::uuid[])`, [targets, location]);
+  if (max_files_per_session) await q(`UPDATE galleries SET max_files_per_session=$2 WHERE id = ANY($1::uuid[])`, [targets, max_files_per_session]);
+  if (max_session_bytes) await q(`UPDATE galleries SET max_session_bytes=$2 WHERE id = ANY($1::uuid[])`, [targets, max_session_bytes]);
+  if (max_file_bytes) await q(`UPDATE galleries SET max_file_bytes=$2 WHERE id = ANY($1::uuid[])`, [targets, max_file_bytes]);
+  if (cover_asset_id !== undefined) await q(`UPDATE galleries SET cover_asset_id=$2 WHERE id = ANY($1::uuid[])`, [targets, cover_asset_id]);
   // category_id/is_unlisted are db/007_config_and_categories.sql columns — the
   // Access modal always sends both alongside view_password, so on a DB that
   // hasn't had 007 applied yet this must degrade quietly rather than 500 and
   // block setting a password (which has no such dependency).
-  if (category_id !== undefined) { try { await q(`UPDATE galleries SET category_id=$2 WHERE id=$1`, [id, category_id || null]); } catch {} }
-  if (is_unlisted !== undefined) { try { await q(`UPDATE galleries SET is_unlisted=$2 WHERE id=$1`, [id, is_unlisted]); } catch {} }
+  if (category_id !== undefined) { try { await q(`UPDATE galleries SET category_id=$2 WHERE id = ANY($1::uuid[])`, [targets, category_id || null]); } catch {} }
+  if (is_unlisted !== undefined) { try { await q(`UPDATE galleries SET is_unlisted=$2 WHERE id = ANY($1::uuid[])`, [targets, is_unlisted]); } catch {} }
   // view_password: "" clears protection, a non-empty string sets a new password, omitted = unchanged.
+  // Only ever sent for a single gallery — the bulk action bar has no password field.
   if (view_password !== undefined) {
     const hash = view_password.trim() ? await bcrypt.hash(view_password.trim(), 12) : null;
-    await q(`UPDATE galleries SET view_password_hash=$2 WHERE id=$1`, [id, hash]);
-    await audit(user.id, hash ? "set_gallery_password" : "clear_gallery_password", { id }, hashIp(clientIp(req)));
+    await q(`UPDATE galleries SET view_password_hash=$2 WHERE id = ANY($1::uuid[])`, [targets, hash]);
+    await audit(user.id, hash ? "set_gallery_password" : "clear_gallery_password", { ids: targets }, hashIp(clientIp(req)));
   }
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, count: targets.length });
 }

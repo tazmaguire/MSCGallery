@@ -151,10 +151,13 @@ app/                     Next.js 14 (App Router, TypeScript)
                          over the ~100MB single-PUT threshold) — admin-side
                          tagging UI stays, only the PUBLIC bib search box was
                          pulled), ThemeToggle, AdminNav (shows the deployed
-                         build's git SHA — see below), GalleryList, GalleryGrid
-                         (home page tile grid, reused by embed/all + embed/category/[slug]),
-                         SiteHeader, GalleryPasswordGate, AccountForm, UsersManager,
-                         SiteSettingsForm, StorageSettingsForm, SettingsTabs, EmbedsForm
+                         build's git SHA — see below), GalleryList (sort +
+                         multi-select + bulk publish/hide/unlist/category —
+                         same select-all/bulk-bar pattern as ModerationQueue),
+                         GalleryGrid (home page tile grid, reused by embed/all +
+                         embed/category/[slug]), SiteHeader, GalleryPasswordGate,
+                         AccountForm, UsersManager, SiteSettingsForm,
+                         StorageSettingsForm, SettingsTabs, EmbedsForm
   src/lib/moderation.ts  single source of truth for pending-queue count/list/
                          galleries — every page reads through this, not its own query
   src/lib/siteIdentity.ts pure display-mode logic (resolveSiteIdentity), split

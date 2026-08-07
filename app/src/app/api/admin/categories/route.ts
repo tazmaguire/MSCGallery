@@ -30,10 +30,16 @@ export async function POST(req: NextRequest) {
   } catch {
     // Most likely a duplicate name (UNIQUE constraint) — resolve to the
     // existing category instead of failing, so re-typing "Sport" a second
-    // time just selects it rather than erroring.
-    const [existing] = await q(`SELECT * FROM gallery_categories WHERE lower(name)=lower($1)`, [clean]);
-    if (existing) return NextResponse.json(existing);
-    return NextResponse.json({ error: "Couldn't create — has db/007_config_and_categories.sql been applied?" }, { status: 409 });
+    // time just selects it rather than erroring. This fallback lookup itself
+    // needs its own try/catch: if db/007_config_and_categories.sql was never
+    // applied, gallery_categories doesn't exist at all, and this SELECT would
+    // otherwise throw uncaught — a 500 with no JSON body, which the client
+    // can only ever show as a generic "couldn't add" with no real diagnosis.
+    try {
+      const [existing] = await q(`SELECT * FROM gallery_categories WHERE lower(name)=lower($1)`, [clean]);
+      if (existing) return NextResponse.json(existing);
+    } catch {}
+    return NextResponse.json({ error: "Couldn't create — has db/007_config_and_categories.sql been applied? Run it on the server, then try again." }, { status: 409 });
   }
 }
 

@@ -17,7 +17,7 @@ function onThumbError(e: React.SyntheticEvent<HTMLImageElement>) {
   img.src = THUMB_FALLBACK;
 }
 
-export default function GalleryGrid({ galleries }: { galleries: GalleryTile[] }) {
+export default function GalleryGrid({ galleries, hideFilter, linkTarget }: { galleries: GalleryTile[]; hideFilter?: boolean; linkTarget?: string }) {
   const categories = useMemo(() => {
     const seen = new Set<string>();
     const list: string[] = [];
@@ -29,7 +29,7 @@ export default function GalleryGrid({ galleries }: { galleries: GalleryTile[] })
 
   return (
     <div>
-      {categories.length > 1 && (
+      {!hideFilter && categories.length > 1 && (
         <div className="no-scrollbar mb-8 flex gap-2 overflow-x-auto pb-1">
           <button onClick={() => setActive(null)}
             className={`shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition ${!active ? "bg-[var(--text)] text-[var(--bg)]" : "text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"}`}>
@@ -46,7 +46,7 @@ export default function GalleryGrid({ galleries }: { galleries: GalleryTile[] })
 
       <div className="grid grid-cols-1 gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
         {shown.map((g) => (
-          <Link key={g.slug} href={`/g/${g.slug}`} className="group">
+          <Link key={g.slug} href={`/g/${g.slug}`} target={linkTarget} rel={linkTarget === "_blank" ? "noopener" : undefined} className="group">
             <div className="relative aspect-[4/5] overflow-hidden rounded-[var(--radius)] bg-[var(--surface)]">
               {g.cover
                 ? <img src={g.cover} alt="" onError={onThumbError} className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]" />

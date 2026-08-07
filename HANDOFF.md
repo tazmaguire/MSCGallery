@@ -117,10 +117,17 @@ app/                     Next.js 14 (App Router, TypeScript)
     d/[id]/              download redirect → presigned R2 URL (free egress, also
                          password-gated)
     u/[token]/           guest upload page (open / pin modes)
+    embed/               iframe-embeddable views for third-party sites — g/[slug]
+                         (single gallery, works even if unlisted, shows a
+                         link-out card instead of photos if password-protected),
+                         category/[slug] (one category's galleries),
+                         all (every published+listed gallery). The ONE place
+                         middleware.ts relaxes frame-ancestors — see Guardrails.
     admin/               list, gallery manager, moderation queue (grid +
                          multi-select), login, account (self-service),
                          users (owner-only), settings (owner-only — Site tab:
-                         global branding; Storage & domain tab: R2 + PUBLIC_SITE_URL)
+                         global branding; Storage & domain tab: R2 + PUBLIC_SITE_URL;
+                         Embeds tab: generates the <iframe> snippets for embed/*)
     api/                 upload/presign (THE security boundary), admin/*, auth,
                          admin/categories (gallery_categories CRUD),
                          admin/settings/storage (encrypted R2/domain config),
@@ -136,9 +143,10 @@ app/                     Next.js 14 (App Router, TypeScript)
                          Access panel: password/unlisted/category — admin-side
                          tagging UI stays, only the PUBLIC bib search box was
                          pulled), ThemeToggle, AdminNav (shows the deployed
-                         build's git SHA — see below), GalleryList, SiteHeader,
-                         GalleryPasswordGate, AccountForm, UsersManager,
-                         SiteSettingsForm, StorageSettingsForm, SettingsTabs
+                         build's git SHA — see below), GalleryList, GalleryGrid
+                         (home page tile grid, reused by embed/all + embed/category/[slug]),
+                         SiteHeader, GalleryPasswordGate, AccountForm, UsersManager,
+                         SiteSettingsForm, StorageSettingsForm, SettingsTabs, EmbedsForm
   src/lib/moderation.ts  single source of truth for pending-queue count/list/
                          galleries — every page reads through this, not its own query
   src/lib/siteIdentity.ts pure display-mode logic (resolveSiteIdentity), split
@@ -378,6 +386,14 @@ docker compose logs worker --tail 50
   with "Module not found". Client components needing the logo/name
   display-mode logic import `src/lib/siteIdentity.ts` instead — a
   db-free module `siteConfig.ts` re-exports from for server-side callers.
+- **`frame-ancestors 'none'` / `X-Frame-Options: DENY` is site-wide except
+  `/embed/*`** (`middleware.ts`), which sets `frame-ancestors *` and omits XFO
+  entirely so it can be dropped into a third-party page's `<iframe>` — that's
+  the whole point of the embed routes. If you ever add a new route under
+  `/embed/`, it inherits this automatically from the path prefix; don't widen
+  the exemption to any other path, and don't add anything under `/embed/`
+  that exposes non-public data (it's unauthenticated by design, same
+  visibility rules as the public gallery routes).
 
 ---
 

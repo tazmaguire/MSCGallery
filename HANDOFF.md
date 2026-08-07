@@ -153,11 +153,18 @@ app/                     Next.js 14 (App Router, TypeScript)
                          Download-selected, and Edit credit now works on any
                          selection size, not just one (warns if the selection
                          spans more than one existing contributor, since
-                         saving renames all of them to the same name/link) —
+                         saving renames all of them to the same name/link);
+                         rename for the gallery itself and for any album
+                         (pencil icon, small RenameModal — the PATCH support
+                         already existed on both api/admin/galleries and
+                         api/admin/albums, there was just never a UI for it) —
                          admin-side tagging UI stays, only the PUBLIC bib
                          search box was pulled), ThemeToggle, AdminNav (shows
                          the deployed build's git SHA — see below), GalleryList
-                         (sort — including drag-to-reorder via a "Custom
+                         (sort is a persisted, site-wide setting now —
+                         site_settings.gallery_sort_mode, db/012 — read by the
+                         public home page + embeds too, not just this admin's
+                         browser tab; includes drag-to-reorder via a "Custom
                          order" mode, native HTML5 DnD off a small grip handle,
                          see db/011_gallery_sort_order.sql — + multi-select +
                          bulk publish/hide/unlist/category — same select-all/
@@ -216,6 +223,12 @@ db/011_gallery_sort_order.sql galleries.sort_order — manual drag-to-reorder
                          changes on the public home page/embeds until an
                          admin actually drags something; date sorting is the
                          tiebreak either way.
+db/012_gallery_sort_mode.sql site_settings.gallery_sort_mode — the galleries
+                         list's sort choice, made a real site-wide setting
+                         instead of a per-admin, per-tab local one. Read by
+                         the public home page + embed/all + embed/category/[slug]
+                         (src/lib/gallerySort.ts), not just the admin list.
+                         Defaults to 'date_asc' (oldest to newest).
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -482,6 +495,17 @@ docker compose logs worker --tail 50
   the exemption to any other path, and don't add anything under `/embed/`
   that exposes non-public data (it's unauthenticated by design, same
   visibility rules as the public gallery routes).
+- **A `catch` block's fallback query needs its own `try/catch` too.** Found
+  in `api/admin/categories` POST: the catch handled "duplicate name" by
+  falling back to a `SELECT` for the existing row — but on a DB that hasn't
+  had `db/007` applied at all, `gallery_categories` doesn't exist, so that
+  fallback `SELECT` threw too, uncaught, producing a 500 with no JSON body.
+  The client's `.catch(() => ({}))` swallowed the parse failure and showed a
+  generic "Couldn't add that category" with zero diagnostic value — looked
+  exactly like a real code bug from the outside. Any "try the happy path,
+  fall back to X on failure" pattern needs X itself guarded, or a missing
+  migration downgrades from "clear 409 with the migration name in it" to
+  "silent, undiagnosable failure."
 
 ---
 

@@ -1,5 +1,6 @@
 import { q } from "@/lib/db"; import ThemeToggle from "@/components/ThemeToggle";
 import { siteConfig } from "@/lib/siteConfig";
+import { gallerySortClause } from "@/lib/gallerySort";
 import SiteHeader from "@/components/SiteHeader";
 import GalleryGrid from "@/components/GalleryGrid";
 export const dynamic = "force-dynamic";
@@ -7,19 +8,21 @@ export default async function Home() {
   const site = await siteConfig();
   let g: any[];
   try {
-    // gal.sort_order (db/011) ahead of event_date: an admin's drag-to-reorder
-    // takes effect once used, but every gallery defaults to sort_order=0, so
-    // untouched galleries just tie-break on event_date exactly as before —
-    // nothing changes here until the admin actually drags something.
+    // The order here is a real, persisted, site-wide setting an admin picks
+    // from the galleries list (site_settings.gallery_sort_mode,
+    // db/012_gallery_sort_mode.sql) — defaults to oldest-first. Guests have
+    // no control over it. "custom" (drag-to-reorder, db/011) ties on
+    // gal.sort_order, which defaults to 0 for every gallery until an admin
+    // actually drags something.
     g = await q(
       `SELECT gal.id, gal.slug, gal.name, gal.event_date, gal.location, gal.brand, gc.name AS category_name, gc.sort_order AS category_sort
        FROM galleries gal LEFT JOIN gallery_categories gc ON gc.id=gal.category_id
        WHERE gal.is_published AND NOT gal.is_unlisted
-       ORDER BY gc.sort_order NULLS LAST, gc.name NULLS LAST, gal.sort_order, gal.event_date DESC NULLS LAST`);
+       ORDER BY gc.sort_order NULLS LAST, gc.name NULLS LAST, ${gallerySortClause(site.gallerySortMode)}`);
   } catch {
-    // db/007_config_and_categories.sql and/or db/011_gallery_sort_order.sql
-    // not applied yet — fall back to no categories/unlisted filter/custom order.
-    g = await q(`SELECT id, slug, name, event_date, location, brand FROM galleries WHERE is_published ORDER BY event_date DESC NULLS LAST`);
+    // db/007_config_and_categories.sql and/or db/011/012 not applied yet —
+    // fall back to no categories/unlisted filter/custom order/sort setting.
+    g = await q(`SELECT id, slug, name, event_date, location, brand FROM galleries WHERE is_published ORDER BY event_date ASC NULLS LAST`);
   }
   // Custom covers (db/002_customisation.sql) — best-effort, see g/[slug]/page.tsx for why.
   const coverThumb: Record<string, string> = {};

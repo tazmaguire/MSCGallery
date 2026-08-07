@@ -1,5 +1,6 @@
 import { q } from "@/lib/db";
 import { siteConfig } from "@/lib/siteConfig";
+import { gallerySortClause } from "@/lib/gallerySort";
 import GalleryGrid from "@/components/GalleryGrid";
 export const dynamic = "force-dynamic";
 
@@ -11,9 +12,9 @@ export default async function EmbedAll() {
       `SELECT gal.id, gal.slug, gal.name, gal.event_date, gal.location, gal.brand, gc.name AS category_name
        FROM galleries gal LEFT JOIN gallery_categories gc ON gc.id=gal.category_id
        WHERE gal.is_published AND NOT gal.is_unlisted
-       ORDER BY gc.sort_order NULLS LAST, gc.name NULLS LAST, gal.sort_order, gal.event_date DESC NULLS LAST`);
+       ORDER BY gc.sort_order NULLS LAST, gc.name NULLS LAST, ${gallerySortClause(site.gallerySortMode)}`);
   } catch {
-    g = await q(`SELECT id, slug, name, event_date, location, brand FROM galleries WHERE is_published ORDER BY event_date DESC NULLS LAST`);
+    g = await q(`SELECT id, slug, name, event_date, location, brand FROM galleries WHERE is_published ORDER BY event_date ASC NULLS LAST`);
   }
   const coverThumb: Record<string, string> = {};
   try {

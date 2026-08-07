@@ -17,10 +17,11 @@ import type { DisplayMode } from "./siteIdentity";
 export type { DisplayMode } from "./siteIdentity";
 export { resolveSiteIdentity } from "./siteIdentity";
 
+export type GallerySortMode = "date_asc" | "date_desc" | "name_asc" | "name_desc" | "custom";
 export type SiteConfig = {
   name: string; tagline: string; logoUrl: string | null; faviconUrl: string | null;
   primary: string; accent: string; theme: "light" | "dark" | null;
-  footerText: string; contactEmail: string; displayMode: DisplayMode;
+  footerText: string; contactEmail: string; displayMode: DisplayMode; gallerySortMode: GallerySortMode;
 };
 
 export async function siteConfig(): Promise<SiteConfig> {
@@ -35,6 +36,7 @@ export async function siteConfig(): Promise<SiteConfig> {
     footerText: "",
     contactEmail: "",
     displayMode: "both",
+    gallerySortMode: "date_asc", // "Default to oldest to newest" — explicit product decision, not an arbitrary pick
   };
   try {
     const [row] = await q<any>(`SELECT * FROM site_settings WHERE id=true`);
@@ -49,6 +51,7 @@ export async function siteConfig(): Promise<SiteConfig> {
       if (row.footer_text) cfg.footerText = row.footer_text;
       if (row.contact_email) cfg.contactEmail = row.contact_email;
       if (row.display_mode === "logo" || row.display_mode === "name" || row.display_mode === "both") cfg.displayMode = row.display_mode;
+      if (["date_asc", "date_desc", "name_asc", "name_desc", "custom"].includes(row.gallery_sort_mode)) cfg.gallerySortMode = row.gallery_sort_mode;
     }
   } catch { /* db/005_site_settings.sql not applied yet, or DB unreachable at this call site — fall back to env/defaults */ }
   return cfg;

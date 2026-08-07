@@ -11,14 +11,31 @@ const SORT_LABELS: Record<SortKey, string> = {
 
 export default function GalleryList({ isOwner }: { isOwner: boolean }) {
   const [g, setG] = useState<any[]>([]); const [show, setShow] = useState(false);
-  const [sort, setSort] = useState<SortKey>("date_desc");
+  // "date_asc" (oldest to newest) is the site-wide default until the setting
+  // loads — matches siteConfig()'s default so there's no visible flash of a
+  // different order. This choice is a real, persisted setting
+  // (site_settings.gallery_sort_mode, db/012_gallery_sort_mode.sql) shown to
+  // every visitor on the public home page — not just this admin's local view,
+  // which is what it used to be. Guests never get a control to change it.
+  const [sort, setSort] = useState<SortKey>("date_asc");
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [categories, setCategories] = useState<any[]>([]);
   const [bulkCategory, setBulkCategory] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const load = () => fetch("/api/admin/galleries").then(r => r.json()).then(d => setG(d.galleries));
-  useEffect(() => { load(); fetch("/api/admin/categories").then(r => r.json()).then(d => setCategories(d.categories || [])); }, []);
+  useEffect(() => {
+    load();
+    fetch("/api/admin/categories").then(r => r.json()).then(d => setCategories(d.categories || []));
+    fetch("/api/admin/settings").then(r => r.json()).then(d => {
+      const mode = d.settings?.gallery_sort_mode;
+      if (mode) setSort(mode);
+    });
+  }, []);
+  const changeSort = (mode: SortKey) => {
+    setSort(mode);
+    fetch("/api/admin/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ gallery_sort_mode: mode }) });
+  };
   const toggle = (x: any) => fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: x.id, is_published: !x.is_published }) }).then(load);
   const totalBytes = useMemo(() => g.reduce((n, x) => n + Number(x.storage_bytes || 0), 0), [g]);
 
@@ -66,7 +83,7 @@ export default function GalleryList({ isOwner }: { isOwner: boolean }) {
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <h1 className="display text-3xl">Galleries</h1>
         <div className="flex items-center gap-2">
-          <select value={sort} onChange={e => setSort(e.target.value as SortKey)} className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-2 text-sm outline-none">
+          <select value={sort} onChange={e => changeSort(e.target.value as SortKey)} title="Sets the order guests see on the public site too" className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-2 text-sm outline-none">
             {(Object.keys(SORT_LABELS) as SortKey[]).map(k => <option key={k} value={k}>{SORT_LABELS[k]}</option>)}
           </select>
           {isOwner && <button onClick={() => setShow(true)} className="btn-primary flex items-center gap-2 px-3 py-2 text-sm"><Plus size={15} />New gallery</button>}

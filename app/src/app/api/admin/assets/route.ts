@@ -11,6 +11,7 @@ export async function GET(req: NextRequest) {
   try {
     rows = await q(
       `SELECT a.id, a.kind, a.visibility, a.thumb_key, a.bytes, a.original_filename, a.source, a.album_id,
+              COALESCE(a.taken_at, a.created_at) AS date,
               c.first_name, c.display_name AS contributor, c.link_url AS contributor_link
        FROM assets a JOIN contributors c ON c.id=a.contributor_id
        WHERE a.album_id=$1 AND a.deletion_status IS NULL ORDER BY a.taken_at DESC NULLS LAST, a.created_at DESC`, [albumId]);
@@ -18,6 +19,7 @@ export async function GET(req: NextRequest) {
     // db/010_contributor_link.sql not applied yet.
     rows = await q(
       `SELECT a.id, a.kind, a.visibility, a.thumb_key, a.bytes, a.original_filename, a.source, a.album_id,
+              COALESCE(a.taken_at, a.created_at) AS date,
               c.first_name, c.display_name AS contributor
        FROM assets a JOIN contributors c ON c.id=a.contributor_id
        WHERE a.album_id=$1 AND a.deletion_status IS NULL ORDER BY a.taken_at DESC NULLS LAST, a.created_at DESC`, [albumId]);

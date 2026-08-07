@@ -1,7 +1,7 @@
 "use client";
 /** Admin gallery manager: albums, add pro photos, three link modes + QR, move, edit, delete, branding. */
-import { useState, useEffect, useCallback, useRef } from "react";
-import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star, Tag, Search } from "lucide-react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star, Tag, Search, CheckSquare, Square } from "lucide-react";
 import { DISPLAY_FONTS, BODY_FONTS, MONO_FONTS } from "@/lib/fonts";
 import { formatBytes, flatMonthlyCost, formatUSD } from "@/lib/storageCost";
 
@@ -43,6 +43,19 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
   useEffect(() => { loadAlbums(); loadLinks(); }, []);
   useEffect(() => { loadAssets(); setSel(new Set()); }, [active]);
   const album = albums.find(a => a.id === active);
+
+  const [assetSort, setAssetSort] = useState<"date_desc" | "date_asc" | "name_asc" | "name_desc">("date_desc");
+  const sortedAssets = useMemo(() => {
+    const byName = (a: any) => a.first_name || a.contributor || "";
+    switch (assetSort) {
+      case "date_asc": return [...assets].reverse(); // server already orders newest-first
+      case "name_asc": return [...assets].sort((a, b) => byName(a).localeCompare(byName(b)));
+      case "name_desc": return [...assets].sort((a, b) => byName(b).localeCompare(byName(a)));
+      default: return assets; // date_desc — the server's native order
+    }
+  }, [assets, assetSort]);
+  const selectAllAssets = () => setSel(new Set(sortedAssets.map(a => a.id)));
+  const deselectAllAssets = () => setSel(new Set());
 
   const uploadPro = async (files: FileList) => {
     if (!active) return;
@@ -174,6 +187,19 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
         </div>
       )}
 
+      {album && assets.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <select value={assetSort} onChange={e => setAssetSort(e.target.value as any)} className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1.5 text-xs outline-none">
+            <option value="date_desc">Date (newest first)</option>
+            <option value="date_asc">Date (oldest first)</option>
+            <option value="name_asc">Name (A–Z)</option>
+            <option value="name_desc">Name (Z–A)</option>
+          </select>
+          <button onClick={selectAllAssets} className="data flex items-center gap-1.5 text-[var(--text-2)] hover:text-[var(--text)]"><CheckSquare size={13} />Select all</button>
+          <button onClick={deselectAllAssets} className="data flex items-center gap-1.5 text-[var(--text-2)] hover:text-[var(--text)]"><Square size={13} />Deselect all</button>
+        </div>
+      )}
+
       {showProQueue && (
         <div className="fixed bottom-4 left-4 z-40 w-80 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
           <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
@@ -201,7 +227,7 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
       )}
 
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
-        {assets.map(a => { const on = sel.has(a.id); return (
+        {sortedAssets.map(a => { const on = sel.has(a.id); return (
           <button key={a.id} onClick={() => setSel(s => { const n = new Set(s); n.has(a.id) ? n.delete(a.id) : n.add(a.id); return n; })} className={`relative overflow-hidden rounded-[var(--radius)] border ${on ? "border-[var(--accent)]" : "border-[var(--border)]"}`}>
             <img src={a.thumb_key ? `/thumbs/thumb/${a.thumb_key}` : ""} alt="" loading="lazy" className="aspect-square w-full bg-[var(--surface)] object-cover" />
             {a.visibility === "pending" && <span className="data absolute left-1 top-1 rounded bg-[var(--accent)]/80 px-1 font-bold text-[var(--bg)]">PENDING</span>}
@@ -220,9 +246,14 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
               {sel.size === 1 && assets.find(a => a.id === [...sel][0])?.kind !== "video" && <>
                 <button onClick={() => setCover([...sel][0], "album")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs" title="Use as this album's cover"><Star size={12} />Album cover</button>
                 <button onClick={() => setCover([...sel][0], "gallery")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs" title="Use as this gallery's cover"><Star size={12} />Gallery cover</button>
-                <button onClick={() => setPanel("editCredit")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Pencil size={12} />Edit credit</button>
-                <button onClick={() => setPanel("tags")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Tag size={12} />Tags</button>
               </>}
+              <button onClick={() => setPanel("editCredit")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Pencil size={12} />Edit credit</button>
+              {sel.size === 1 && <button onClick={() => setPanel("tags")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Tag size={12} />Tags</button>}
+              {!album?.is_video_album && (
+                sel.size <= 300
+                  ? <a href={`/g/${gallery.slug}/download?${[...sel].map(id => `id=${id}`).join("&")}`} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Download size={12} />Download selected</a>
+                  : <span className="data text-[var(--text-2)]">Select 300 or fewer to download together</span>
+              )}
               {album?.is_video_album ? (
                 <span className="data text-[var(--text-2)]">Videos never leave this album — download, then delete once backed up</span>
               ) : [...sel].some(id => assets.find(a => a.id === id)?.kind === "video") ? (
@@ -243,7 +274,10 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
       {panel === "newAlbum" && <NewAlbumModal galleryId={gallery.id} onClose={() => setPanel(null)} onDone={() => { setPanel(null); loadAlbums(); }} />}
       {panel === "brand" && <BrandModal gallery={gallery} onClose={() => setPanel(null)} />}
       {panel === "access" && <AccessModal gallery={gallery} onClose={() => setPanel(null)} />}
-      {panel === "editCredit" && <EditCreditModal current={assets.find(a => a.id === [...sel][0])} onClose={() => setPanel(null)} onDone={() => { setPanel(null); setSel(new Set()); loadAssets(); }} assetIds={[...sel]} />}
+      {panel === "editCredit" && <EditCreditModal
+        current={assets.find(a => a.id === [...sel][0])}
+        contributorCount={new Set([...sel].map(id => assets.find(a => a.id === id)?.contributor).filter(Boolean)).size}
+        onClose={() => setPanel(null)} onDone={() => { setPanel(null); setSel(new Set()); loadAssets(); }} assetIds={[...sel]} />}
       {panel === "tags" && <TagsModal assetId={[...sel][0]} onClose={() => setPanel(null)} />}
     </div>
   );
@@ -411,7 +445,7 @@ function TagsModal({ assetId, onClose }: any) {
     </Modal>
   );
 }
-function EditCreditModal({ current, assetIds, onClose, onDone }: any) {
+function EditCreditModal({ current, assetIds, contributorCount, onClose, onDone }: any) {
   const [name, setName] = useState(current?.contributor || "");
   const [link, setLink] = useState(current?.contributor_link || "");
   const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
@@ -426,6 +460,11 @@ function EditCreditModal({ current, assetIds, onClose, onDone }: any) {
   return (
     <Modal title="Edit credit" onClose={onClose}>
       <p className="data mb-3 text-[var(--text-3)]">Applies to this contributor everywhere — including their other photos in this gallery.</p>
+      {contributorCount > 1 && (
+        <p className="data mb-3 rounded-[var(--radius)] bg-[var(--accent)]/15 px-3 py-2 text-[var(--text)]">
+          Your selection spans {contributorCount} different contributors — saving will rename all of them to this one name (and link). If that's not what you meant, select photos from just one contributor first.
+        </p>
+      )}
       <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Name</label>
       <input value={name} onChange={e => setName(e.target.value)} placeholder="Full name" className="mb-3 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
       <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Link <span className="font-normal text-[var(--text-3)]">(optional — their site, Instagram, portfolio)</span></label>

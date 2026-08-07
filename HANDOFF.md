@@ -148,13 +148,21 @@ app/                     Next.js 14 (App Router, TypeScript)
                          per-file progress queue (XHR upload with progress,
                          handles multipart too — admin pro-uploads had no
                          multipart path before, silently no-op'd on anything
-                         over the ~100MB single-PUT threshold) — admin-side
-                         tagging UI stays, only the PUBLIC bib search box was
-                         pulled), ThemeToggle, AdminNav (shows the deployed
-                         build's git SHA — see below), GalleryList (sort +
-                         multi-select + bulk publish/hide/unlist/category —
-                         same select-all/bulk-bar pattern as ModerationQueue),
-                         GalleryGrid (home page tile grid, reused by embed/all +
+                         over the ~100MB single-PUT threshold); asset grid has
+                         its own sort (date/name) + select-all/deselect-all +
+                         Download-selected, and Edit credit now works on any
+                         selection size, not just one (warns if the selection
+                         spans more than one existing contributor, since
+                         saving renames all of them to the same name/link) —
+                         admin-side tagging UI stays, only the PUBLIC bib
+                         search box was pulled), ThemeToggle, AdminNav (shows
+                         the deployed build's git SHA — see below), GalleryList
+                         (sort — including drag-to-reorder via a "Custom
+                         order" mode, native HTML5 DnD off a small grip handle,
+                         see db/011_gallery_sort_order.sql — + multi-select +
+                         bulk publish/hide/unlist/category — same select-all/
+                         bulk-bar pattern as ModerationQueue), GalleryGrid
+                         (home page tile grid, reused by embed/all +
                          embed/category/[slug]), SiteHeader, GalleryPasswordGate,
                          AccountForm, UsersManager, SiteSettingsForm,
                          StorageSettingsForm, SettingsTabs, EmbedsForm
@@ -202,6 +210,12 @@ db/010_contributor_link.sql contributors.link_url — optional external link
                          credit, set from GalleryManager's Edit credit panel
                          or at pro-upload time. Shown as a small icon next
                          to "SHOT BY <name>" on the public gallery.
+db/011_gallery_sort_order.sql galleries.sort_order — manual drag-to-reorder
+                         in the admin galleries list ("Custom order" sort
+                         mode). Defaults to 0 for every gallery, so nothing
+                         changes on the public home page/embeds until an
+                         admin actually drags something; date sorting is the
+                         tiebreak either way.
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/

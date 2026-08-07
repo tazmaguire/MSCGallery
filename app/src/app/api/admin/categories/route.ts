@@ -14,7 +14,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await getUser(); if (!user || user.role !== "owner") return NextResponse.json({ error: "owners only" }, { status: 403 });
+  // Any logged-in admin, not owners only — this is created inline from the
+  // gallery Access panel, which every admin (not just owners) already has
+  // access to. Owner-gating just this call was the bug: a moderator could
+  // open that panel and have "Add" silently 403 with no error shown.
+  const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
   const { name } = await req.json();
   const clean = (name || "").trim();
   if (!clean) return NextResponse.json({ error: "Name required" }, { status: 400 });
@@ -24,7 +28,12 @@ export async function POST(req: NextRequest) {
     await audit(user.id, "create_category", { name: clean }, hashIp(clientIp(req)));
     return NextResponse.json(c);
   } catch {
-    return NextResponse.json({ error: "Couldn't create — name already used, or db/007_config_and_categories.sql isn't applied yet." }, { status: 409 });
+    // Most likely a duplicate name (UNIQUE constraint) — resolve to the
+    // existing category instead of failing, so re-typing "Sport" a second
+    // time just selects it rather than erroring.
+    const [existing] = await q(`SELECT * FROM gallery_categories WHERE lower(name)=lower($1)`, [clean]);
+    if (existing) return NextResponse.json(existing);
+    return NextResponse.json({ error: "Couldn't create — has db/007_config_and_categories.sql been applied?" }, { status: 409 });
   }
 }
 

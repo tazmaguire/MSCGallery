@@ -231,13 +231,21 @@ function AccessModal({ gallery, onClose }: any) {
   const [categoryId, setCategoryId] = useState(gallery.category_id || "");
   const [categories, setCategories] = useState<any[]>([]);
   const [newCategory, setNewCategory] = useState("");
+  const [categoryErr, setCategoryErr] = useState("");
+  const [addingCategory, setAddingCategory] = useState(false);
   const loadCategories = () => fetch("/api/admin/categories").then(r => r.json()).then(d => setCategories(d.categories || []));
   useEffect(() => { loadCategories(); }, []);
   const addCategory = async () => {
     if (!newCategory.trim()) return;
-    const r = await fetch("/api/admin/categories", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: newCategory }) });
-    const c = await r.json();
-    if (r.ok) { setNewCategory(""); await loadCategories(); setCategoryId(c.id); }
+    setAddingCategory(true); setCategoryErr("");
+    try {
+      const r = await fetch("/api/admin/categories", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: newCategory }) });
+      const c = await r.json().catch(() => ({}));
+      if (!r.ok) { setCategoryErr(c.error || "Couldn't add that category."); return; }
+      setNewCategory(""); await loadCategories(); setCategoryId(c.id);
+    } catch {
+      setCategoryErr("Couldn't reach the server.");
+    } finally { setAddingCategory(false); }
   };
   const save = async () => {
     setBusy(true); setErr("");
@@ -268,10 +276,12 @@ function AccessModal({ gallery, onClose }: any) {
         <option value="">No category</option>
         {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
       </select>
-      <div className="mb-4 flex gap-2">
+      <div className="mb-1.5 flex gap-2">
         <input value={newCategory} onChange={e => setNewCategory(e.target.value)} onKeyDown={e => e.key === "Enter" && addCategory()} placeholder="New category, e.g. Sport" className="flex-1 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)]" />
-        <button onClick={addCategory} disabled={!newCategory.trim()} className="btn-ghost px-3 py-2 text-xs disabled:opacity-30">Add</button>
+        <button onClick={addCategory} disabled={!newCategory.trim() || addingCategory} className="btn-ghost px-3 py-2 text-xs disabled:opacity-30">{addingCategory ? "Adding…" : "Add"}</button>
       </div>
+      {categoryErr && <p className="data mb-3 text-[var(--brand)]">{categoryErr}</p>}
+      {!categoryErr && <p className="data mb-4 text-[var(--text-3)]">New categories are available to every gallery once added.</p>}
 
       {err && <p className="data mb-3 text-[var(--brand)]">{err}</p>}
       <button onClick={save} disabled={busy || (protectedNow && !gallery.view_password_hash && !password)} className="btn-primary w-full py-2.5 disabled:opacity-30">{busy ? "Saving…" : "Save"}</button>

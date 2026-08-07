@@ -110,6 +110,9 @@ app/                     Next.js 14 (App Router, TypeScript)
                          $0.015/GB-month, first 10GB/mo free (site-wide only,
                          not attributed per gallery). Update the rate here if
                          Cloudflare changes it; there's no API to read it live.
+    videoAlbum.ts        getOrCreateVideoAlbum() — every video upload lands
+                         here instead of the public site, see "Video uploads"
+                         below
   src/app/
     g/[slug]/            public gallery (page, password-gated if set) + download/
                          (streaming zip, also password-gated + cart-selection aware,
@@ -181,6 +184,11 @@ db/008_asset_public_bytes.sql assets.public_bytes — size of the re-encoded
                          excluded). Feeds the storage/cost totals in /admin;
                          only backfills for assets re-derived after this
                          migration, not retroactively.
+db/009_video_album.sql  albums.is_video_album — marks each gallery's one
+                         hidden, admin-only video album (auto-created on
+                         first video upload by getOrCreateVideoAlbum(), see
+                         src/lib/videoAlbum.ts). Videos are never shown on
+                         the public site; see "Video uploads" below.
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -269,6 +277,38 @@ audit):
 - Admin routes (`api/admin/*`, `/admin/*`) are intentionally exempt — they
   require `getUser()` and are where pending/private content is *supposed* to
   be visible to logged-in staff.
+
+---
+
+## Video uploads — accepted, never shown publicly
+
+Guests, photographer links, and admin pro-uploads can all upload video —
+it's just never displayed anywhere on the public site. Every video, from any
+source, is silently rerouted at upload time into a hidden, admin-only album
+(`is_video_album`, one per gallery, auto-created on first video upload by
+`getOrCreateVideoAlbum()` in `src/lib/videoAlbum.ts`) instead of wherever it
+was actually headed. That album is `is_private=true`, which is what the
+public gallery query already excludes — no new visibility logic needed.
+
+The worker also skips the transcode entirely for video (previously its
+single most expensive job): no ffmpeg re-encode, no second copy pushed to
+R2. `public_key` just points at the original upload, and a cheap poster
+frame + thumb are still generated so the admin album grid shows something
+recognisable. This is deliberate, not a shortcut — the point is an admin
+downloads the album (its "Download album" button, `g/[slug]/download`)
+and deletes the originals from R2 once backed up elsewhere, to keep
+storage cost down; a re-encoded deliverable nobody will ever stream would
+just be waste.
+
+Because `public_key` is the original rather than a generated deliverable,
+its extension isn't necessarily `.mp4` — the album zip route derives it from
+the actual key, not from `kind`, when serving video (see the comment in
+`g/[slug]/download/route.ts`).
+
+Two things that don't apply to this album, enforced in `GalleryManager.tsx`:
+videos can't be quick-moved to another album (that would put an unprocessed
+original in front of the public), and a video can't be set as an album/gallery
+cover image.
 
 ---
 

@@ -10,6 +10,7 @@ import { q } from "@/lib/db";
 import { originalKey, presignUpload, beginMultipart, presignPart, uploadPlan } from "@/lib/storage";
 import { storedFilename, firstName } from "@/lib/naming";
 import { clientIp, hashIp, rateLimit, pinLocked, pinFail, pinReset } from "@/lib/security";
+import { getOrCreateVideoAlbum } from "@/lib/videoAlbum";
 import bcrypt from "bcryptjs";
 
 const MIN_PHOTO_BYTES = 300 * 1024;
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest) {
   }
 
   const isPhotographer = link.mode === "photographer";
-  const targetAlbum = isPhotographer ? (link.target_album_id || link.guest_album_id) : link.guest_album_id;
+  let targetAlbum = isPhotographer ? (link.target_album_id || link.guest_album_id) : link.guest_album_id;
   const visibility = isPhotographer ? "visible" : "pending";
   const source = isPhotographer ? "photographer" : "guest";
   if (!targetAlbum) return NextResponse.json({ error: "This event isn't set up for uploads yet." }, { status: 400 });
@@ -64,6 +65,12 @@ export async function POST(req: NextRequest) {
   }
 
   const kind = /^video\//.test(contentType) ? "video" : "photo";
+  // Videos are never shown on the public site — every one, regardless of link
+  // mode, is routed into a hidden admin-only album instead (db/009_video_album.sql).
+  if (kind === "video") {
+    try { targetAlbum = await getOrCreateVideoAlbum(link.gallery_id); }
+    catch { return NextResponse.json({ error: "Video uploads aren't set up yet — has db/009_video_album.sql been applied?" }, { status: 409 }); }
+  }
   if (bytes > capFileBytes) return NextResponse.json({ error: "That file is larger than this link allows." }, { status: 413 });
   if (kind === "photo" && bytes < MIN_PHOTO_BYTES)
     return NextResponse.json({ error: "That image looks like a compressed copy. Send the original from your camera roll rather than one that's been through WhatsApp." }, { status: 422 });

@@ -134,14 +134,20 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
           <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3">
             <span className="text-sm"><strong>{sel.size}</strong> selected</span>
             <div className="flex flex-wrap items-center gap-2">
-              {sel.size === 1 && <>
+              {sel.size === 1 && assets.find(a => a.id === [...sel][0])?.kind !== "video" && <>
                 <button onClick={() => setCover([...sel][0], "album")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs" title="Use as this album's cover"><Star size={12} />Album cover</button>
                 <button onClick={() => setCover([...sel][0], "gallery")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs" title="Use as this gallery's cover"><Star size={12} />Gallery cover</button>
                 <button onClick={() => setPanel("editCredit")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Pencil size={12} />Edit credit</button>
                 <button onClick={() => setPanel("tags")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Tag size={12} />Tags</button>
               </>}
-              <span className="data text-[var(--text-2)]">Move to</span>
-              {albums.filter(al => al.id !== active).map(al => <button key={al.id} onClick={() => move(al.id)} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Move size={12} />{al.name}</button>)}
+              {album?.is_video_album ? (
+                <span className="data text-[var(--text-2)]">Videos never leave this album — download, then delete once backed up</span>
+              ) : [...sel].some(id => assets.find(a => a.id === id)?.kind === "video") ? (
+                <span className="data text-[var(--text-2)]">Videos can't be moved — they stay hidden</span>
+              ) : <>
+                <span className="data text-[var(--text-2)]">Move to</span>
+                {albums.filter(al => al.id !== active && !al.is_video_album).map(al => <button key={al.id} onClick={() => move(al.id)} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Move size={12} />{al.name}</button>)}
+              </>}
               {isOwner && <button onClick={remove} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs text-[var(--brand)]"><Trash2 size={12} />Delete</button>}
             </div>
           </div>

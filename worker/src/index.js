@@ -177,6 +177,17 @@ async function derive(a, dir) {
     await pushDerivative("preview", `${a.id}.webp`, await readFile(previewFile), "image/webp");
     m.thumb_key = m.preview_key = `${a.id}.webp`; m.public_key = publicKey; m.public_bytes = pubBuf.length;
   } else {
+    // Videos are never shown on the public site — they land in a hidden,
+    // admin-only album for review/download instead (db/009_video_album.sql,
+    // getOrCreateVideoAlbum() picks the album at upload time, before this
+    // ever runs). So there's no point re-encoding a "public" deliverable
+    // nobody will ever stream: that used to be the worker's single most
+    // expensive job (a full ffmpeg transcode) AND doubled R2 storage for
+    // something downloaded once, by an admin, then deleted. Skip both —
+    // public_key just points at the original already in R2 (ingest_key),
+    // and public_bytes stays 0 since there's no second copy to account for.
+    // Still worth a cheap poster/thumb so the admin album grid shows
+    // something recognisable instead of a blank tile.
     const probe = await exec("ffprobe", ["-v", "error", "-select_streams", "v:0",
       "-show_entries", "stream=width,height:format=duration", "-of", "json", orig]);
     const p = JSON.parse(probe.stdout);
@@ -186,20 +197,9 @@ async function derive(a, dir) {
     const poster = path.join(dir, "poster.jpg");
     await exec("ffmpeg", ["-y", "-ss", "1", "-i", orig, "-frames:v", "1", "-q:v", "3", poster]);
     const thumb = await sharp(poster).resize(cfg.sizes.thumb, cfg.sizes.thumb, { fit: "inside" }).webp({ quality: 78 }).toBuffer();
-    const posterBuf = await sharp(poster).resize(cfg.sizes.preview, cfg.sizes.preview, { fit: "inside" }).webp({ quality: 80 }).toBuffer();
-
-    const pub = path.join(dir, "public.mp4");
-    await exec("ffmpeg", ["-y", "-i", orig, "-vf", "scale='min(1920,iw)':-2",
-      "-c:v", "libx264", "-preset", "medium", "-crf", "21", "-c:a", "aac", "-b:a", "160k",
-      "-movflags", "+faststart", "-metadata", `artist=${credit.name}`, "-metadata", `copyright=${credit.copyright}`, pub]);
-    const publicKey = `pub/${a.id.slice(0, 2)}/${a.id}.mp4`;
-    const pubBuf = await readFile(pub);
-    await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: publicKey, Body: pubBuf,
-      ContentType: "video/mp4", CacheControl: "public, max-age=31536000, immutable" }));
 
     await pushDerivative("thumb", `${a.id}.webp`, thumb, "image/webp");
-    await pushDerivative("poster", `${a.id}.webp`, posterBuf, "image/webp");
-    m.thumb_key = m.poster_key = `${a.id}.webp`; m.public_key = publicKey; m.public_bytes = pubBuf.length;
+    m.thumb_key = `${a.id}.webp`; m.public_key = a.ingest_key; m.public_bytes = 0;
   }
 
   const readyParams = [a.id, m.checksum, m.width ?? null, m.height ?? null, m.duration_s ?? null, m.taken_at ?? null,

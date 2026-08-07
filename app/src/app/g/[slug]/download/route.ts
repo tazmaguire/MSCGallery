@@ -47,10 +47,15 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
   if (ids.length > MAX_CART_IDS) return new Response(`Too many photos in one download (max ${MAX_CART_IDS}).`, { status: 400 });
 
   // Bulk (whole gallery / whole album) is an admin action now — public users
-  // only ever hit this route via a cart selection (ids.length > 0).
+  // only ever hit this route via a cart selection (ids.length > 0). An
+  // authenticated bulk request is also the ONLY way to reach a private
+  // album's contents — specifically the hidden video album
+  // (db/009_video_album.sql) — never for a cart/id-based public request.
+  let isAdminBulk = false;
   if (!ids.length) {
     const user = await getUser();
     if (!user) return new Response("Sign in required for a bulk download.", { status: 403 });
+    isAdminBulk = true;
   }
 
   const [gallery] = await q(
@@ -61,8 +66,11 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
   if (gallery.view_password_hash && !checkGalleryAccess(req.cookies.get(`gv_${gallery.id}`)?.value, gallery.id))
     return new Response("Locked", { status: 403 });
 
-  // Gather what to include. Public downloads only ever see visible assets in
-  // non-private albums — the query is the security boundary.
+  // Gather what to include. Public (cart) downloads only ever see visible
+  // assets in non-private albums — that half of the OR is the security
+  // boundary for the public case. isAdminBulk additionally allows private
+  // albums (e.g. the hidden video album) — it's only ever true after the
+  // getUser() check above, never for a public cart/id-based request.
   const rows = await q(
     `SELECT a.public_key, a.kind, a.original_filename,
             al.name AS album_name, al.slug AS album_slug,
@@ -76,11 +84,11 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
        AND a.status = 'ready'
        AND a.public_key IS NOT NULL
        AND (a.deletion_status IS NULL OR a.deletion_status = '')
-       AND al.is_private = false
+       AND (al.is_private = false OR $4::boolean)
        AND ($2::text IS NULL OR al.slug = $2)
        AND ($3::uuid[] IS NULL OR a.id = ANY($3::uuid[]))
      ORDER BY al.sort_order, a.taken_at`,
-    [gallery.id, ids.length ? null : albumSlug, ids.length ? ids : null]
+    [gallery.id, ids.length ? null : albumSlug, ids.length ? ids : null, isAdminBulk]
   );
 
   if (!rows.length) return new Response("Nothing to download", { status: 404 });
@@ -109,7 +117,13 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
     try {
       for (const r of rows) {
         try {
-          const ext = r.kind === "video" ? "mp4" : "jpg";
+          // Photos: always our own "pub/xx/id.jpg" deliverable, so "jpg" is
+          // exact. Videos: since db/009_video_album.sql, public_key just
+          // points at the original upload (never re-encoded — see the
+          // worker's derive()), which can be any container an admin's phone
+          // or camera produced, so take the extension from the actual key
+          // rather than assuming mp4.
+          const ext = r.kind === "video" ? (r.public_key.split(".").pop() || "mp4") : "jpg";
           const name = downloadFilename({
             shortCode: gallery.short_code,
             location: gallery.location,

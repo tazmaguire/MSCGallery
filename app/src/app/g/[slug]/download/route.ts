@@ -46,31 +46,37 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
   const ids = url.searchParams.getAll("id"); // optional; a cart selection — overrides album
   if (ids.length > MAX_CART_IDS) return new Response(`Too many photos in one download (max ${MAX_CART_IDS}).`, { status: 400 });
 
-  // Bulk (whole gallery / whole album) is an admin action now — public users
-  // only ever hit this route via a cart selection (ids.length > 0). An
-  // authenticated bulk request is also the ONLY way to reach a private
-  // album's contents — specifically the hidden video album
-  // (db/009_video_album.sql) — never for a cart/id-based public request.
-  let isAdminBulk = false;
-  if (!ids.length) {
-    const user = await getUser();
-    if (!user) return new Response("Sign in required for a bulk download.", { status: 403 });
-    isAdminBulk = true;
-  }
+  // Whole-gallery/whole-album (no ?id=) is an admin-only action and always
+  // requires login. A cart selection (?id=...) never requires login — that's
+  // how public visitors download — but if the requester HAPPENS to be a
+  // logged-in admin, their selection can also reach a private album (e.g.
+  // the hidden video album, db/009_video_album.sql) via GalleryManager's
+  // "Download selected". An unauthenticated id-based request stays exactly
+  // as restricted as before: a guest can only ever have selected ids from
+  // what the public gallery actually rendered, which never includes private
+  // albums, so this doesn't open anything up for them.
+  const user = await getUser();
+  const isAdmin = !!user;
+  if (!ids.length && !isAdmin) return new Response("Sign in required for a bulk download.", { status: 403 });
 
   const [gallery] = await q(
     `SELECT * FROM galleries WHERE slug=$1 AND is_published`,
     [params.slug]
   );
   if (!gallery) return new Response("Not found", { status: 404 });
-  if (gallery.view_password_hash && !checkGalleryAccess(req.cookies.get(`gv_${gallery.id}`)?.value, gallery.id))
+  // Admins are already authenticated via their own session — the separate
+  // public password gate (and its gv_<id> cookie) is for guests, and an
+  // admin using GalleryManager's Download buttons has no reason to have
+  // gone through it. Without this, Download all/selected 403'd for any
+  // admin on a password-protected gallery unless they happened to also
+  // hold that cookie.
+  if (!isAdmin && gallery.view_password_hash && !checkGalleryAccess(req.cookies.get(`gv_${gallery.id}`)?.value, gallery.id))
     return new Response("Locked", { status: 403 });
 
-  // Gather what to include. Public (cart) downloads only ever see visible
-  // assets in non-private albums — that half of the OR is the security
-  // boundary for the public case. isAdminBulk additionally allows private
-  // albums (e.g. the hidden video album) — it's only ever true after the
-  // getUser() check above, never for a public cart/id-based request.
+  // Gather what to include. Non-admin requests only ever see visible assets
+  // in non-private albums — that half of the OR is the security boundary
+  // for the public/guest case. A logged-in admin can reach private albums
+  // either way (whole-album bulk, or their own id-based selection).
   const rows = await q(
     `SELECT a.public_key, a.kind, a.original_filename,
             al.name AS album_name, al.slug AS album_slug,
@@ -88,7 +94,7 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
        AND ($2::text IS NULL OR al.slug = $2)
        AND ($3::uuid[] IS NULL OR a.id = ANY($3::uuid[]))
      ORDER BY al.sort_order, a.taken_at`,
-    [gallery.id, ids.length ? null : albumSlug, ids.length ? ids : null, isAdminBulk]
+    [gallery.id, ids.length ? null : albumSlug, ids.length ? ids : null, isAdmin]
   );
 
   if (!rows.length) return new Response("Nothing to download", { status: 404 });

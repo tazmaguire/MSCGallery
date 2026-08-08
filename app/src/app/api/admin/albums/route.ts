@@ -22,7 +22,20 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const user = await getUser(); if (!user) return NextResponse.json({ error: "no" }, { status: 401 });
   const { id, is_private, name, cover_asset_id } = await req.json();
-  if (is_private !== undefined) await q(`UPDATE albums SET is_private=$2 WHERE id=$1 AND is_guest_album=false`, [id, is_private]);
+  // is_video_album (db/009_video_album.sql) stays private no matter what's
+  // requested — that's the entire point of it (videos are never shown on
+  // the public site). Guarded here, not just in the UI, since this is a
+  // real guarantee, not a preference: flipping it public would expose raw,
+  // unprocessed video originals with no re-encoding or credit stamping.
+  if (is_private !== undefined) {
+    try {
+      await q(`UPDATE albums SET is_private=$2 WHERE id=$1 AND is_guest_album=false AND is_video_album=false`, [id, is_private]);
+    } catch {
+      // db/009_video_album.sql not applied yet — no is_video_album column,
+      // so there's no hidden video album to protect from this update either.
+      await q(`UPDATE albums SET is_private=$2 WHERE id=$1 AND is_guest_album=false`, [id, is_private]);
+    }
+  }
   if (name) await q(`UPDATE albums SET name=$2 WHERE id=$1`, [id, name]);
   if (cover_asset_id !== undefined) await q(`UPDATE albums SET cover_asset_id=$2 WHERE id=$1`, [id, cover_asset_id]);
   return NextResponse.json({ ok: true });

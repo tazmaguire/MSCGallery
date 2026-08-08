@@ -157,7 +157,12 @@ app/                     Next.js 14 (App Router, TypeScript)
                          rename for the gallery itself and for any album
                          (pencil icon, small RenameModal — the PATCH support
                          already existed on both api/admin/galleries and
-                         api/admin/albums, there was just never a UI for it) —
+                         api/admin/albums, there was just never a UI for it);
+                         a Live/Unlisted/Hidden status control right in the
+                         header (derived from is_published + is_unlisted,
+                         one-click to change either) — previously the only
+                         way to change it was the galleries list's Live/Hidden
+                         toggle, which never showed or offered Unlisted at all —
                          admin-side tagging UI stays, only the PUBLIC bib
                          search box was pulled), ThemeToggle, AdminNav (shows
                          the deployed build's git SHA — see below), GalleryList
@@ -370,6 +375,27 @@ Two things that don't apply to this album, enforced in `GalleryManager.tsx`:
 videos can't be quick-moved to another album (that would put an unprocessed
 original in front of the public), and a video can't be set as an album/gallery
 cover image.
+
+The album's Public/Private toggle button is also hidden for it specifically
+(shows a static "Always private" instead) — **and that's enforced server-side
+too**, `api/admin/albums` PATCH excludes `is_video_album` from any `is_private`
+update. A UI-only guard here wouldn't actually protect the guarantee; a
+direct API call could still flip it public and expose raw, unprocessed
+originals with no re-encoding or credit stamping.
+
+Bulk tools (select-all, download selected/album, delete, edit credit) all
+work normally against this album for an authenticated admin — the only
+route that needed a change was `g/[slug]/download` (the zip endpoint):
+`?id=` selections used to be treated as *always* the public/unauthenticated
+cart path, which can never reach a private album by design. It now also
+checks `getUser()` on the id-based path — if authenticated, private albums
+become reachable for that admin's own selection; an unauthenticated request
+is exactly as restricted as before (a guest's cart can only ever contain
+ids the public gallery actually rendered, which never includes a private
+album, so this doesn't open anything up for them). The same route also used
+to reject an admin's Download all/selected on a password-protected gallery
+unless they separately held the public password-gate cookie — admins are
+already authenticated via session, so that check is skipped for them now.
 
 ---
 

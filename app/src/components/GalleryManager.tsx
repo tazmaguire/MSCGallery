@@ -102,7 +102,7 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
   };
   const move = async (albumId: string) => { await fetch("/api/admin/assets", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds: [...sel], albumId }) }); setSel(new Set()); loadAssets(); };
   const remove = async () => {
-    if (!confirm(`Delete ${sel.size} ${sel.size === 1 ? "photo" : "photos"}? This can't be undone.`)) return;
+    if (!confirm(`Delete ${sel.size} ${sel.size === 1 ? "file" : "files"}? This removes them from storage too, and can't be undone.`)) return;
     await fetch("/api/admin/assets", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds: [...sel] }) });
     setSel(new Set()); loadAssets();
   };
@@ -118,6 +118,26 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
   };
   const clearBibSearch = () => { setBibSearch(""); setBibResults(null); };
 
+  // Live / Unlisted / Hidden as one clear status, changeable from right here
+  // instead of only from the galleries list's Live/Hidden toggle (which
+  // never showed Unlisted at all) or burying it in the Access panel.
+  //   Live:     is_published=true,  is_unlisted=false — on the home page
+  //   Unlisted: is_published=true,  is_unlisted=true  — reachable by link/QR only
+  //   Hidden:   is_published=false                    — not reachable at all
+  const galleryStatus: "live" | "unlisted" | "hidden" = !gallery.is_published ? "hidden" : gallery.is_unlisted ? "unlisted" : "live";
+  const setGalleryStatus = async (status: "live" | "unlisted" | "hidden") => {
+    const body: any = { id: gallery.id };
+    if (status === "hidden") body.is_published = false;
+    else { body.is_published = true; body.is_unlisted = status === "unlisted"; }
+    await fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    location.reload();
+  };
+  const STATUS_STYLE: Record<string, string> = {
+    live: "bg-emerald-500/20 text-emerald-300",
+    unlisted: "bg-[var(--accent)]/20 text-[var(--accent)]",
+    hidden: "bg-white/5 text-[var(--text-2)]",
+  };
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-6" style={style}>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -126,12 +146,20 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
             <h1 className="display text-3xl">{gallery.name}</h1>
             <button onClick={() => setPanel("renameGallery")} className="text-[var(--text-3)] hover:text-[var(--text)]" title="Rename gallery"><Pencil size={15} /></button>
           </div>
-          <p className="data text-[var(--text-2)]">
+          <p className="data mb-2 text-[var(--text-2)]">
             {gallery.short_code} · /g/{gallery.slug}
             {storageBytes !== undefined && (
               <span className="text-[var(--text-3)]"> · {formatBytes(storageBytes)} (~{formatUSD(flatMonthlyCost(storageBytes))}/mo)</span>
             )}
           </p>
+          <div className="flex items-center gap-1 rounded-full border border-[var(--border)] p-0.5" title="Live: on the home page. Unlisted: reachable by link/QR only. Hidden: not reachable at all.">
+            {(["live", "unlisted", "hidden"] as const).map(s => (
+              <button key={s} onClick={() => setGalleryStatus(s)}
+                className={`rounded-full px-2.5 py-1 text-xs font-medium capitalize transition ${galleryStatus === s ? STATUS_STYLE[s] : "text-[var(--text-3)] hover:text-[var(--text)]"}`}>
+                {s}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <div className="flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-2.5">
@@ -185,7 +213,11 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
             </>}
             <button onClick={() => setPanel("renameAlbum")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Pencil size={15} />Rename album</button>
             <a href={`/g/${gallery.slug}/download?album=${album.slug}`} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Download size={15} />Download album</a>
-            {!album.is_guest_album && <button onClick={() => fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: album.id, is_private: !album.is_private }) }).then(loadAlbums)} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm">{album.is_private ? <><Lock size={15} />Private</> : <><Eye size={15} />Public</>}</button>}
+            {album.is_video_album ? (
+              <span className="data flex items-center gap-1.5 text-[var(--text-3)]" title="Videos are never shown on the public site"><Lock size={13} />Always private</span>
+            ) : !album.is_guest_album && (
+              <button onClick={() => fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: album.id, is_private: !album.is_private }) }).then(loadAlbums)} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm">{album.is_private ? <><Lock size={15} />Private</> : <><Eye size={15} />Public</>}</button>
+            )}
           </div>
           {!album.is_guest_album && <p className="data text-[var(--text-3)]">Applies to whatever you add next — change it any time before clicking Add photos again.</p>}
         </div>
@@ -253,11 +285,9 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
               </>}
               <button onClick={() => setPanel("editCredit")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Pencil size={12} />Edit credit</button>
               {sel.size === 1 && <button onClick={() => setPanel("tags")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Tag size={12} />Tags</button>}
-              {!album?.is_video_album && (
-                sel.size <= 300
-                  ? <a href={`/g/${gallery.slug}/download?${[...sel].map(id => `id=${id}`).join("&")}`} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Download size={12} />Download selected</a>
-                  : <span className="data text-[var(--text-2)]">Select 300 or fewer to download together</span>
-              )}
+              {sel.size <= 300
+                ? <a href={`/g/${gallery.slug}/download?${[...sel].map(id => `id=${id}`).join("&")}`} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Download size={12} />Download selected</a>
+                : <span className="data text-[var(--text-2)]">Select 300 or fewer to download together</span>}
               {album?.is_video_album ? (
                 <span className="data text-[var(--text-2)]">Videos never leave this album — download, then delete once backed up</span>
               ) : [...sel].some(id => assets.find(a => a.id === id)?.kind === "video") ? (

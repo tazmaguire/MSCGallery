@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
   const capBytes = isPhotographer ? (link.max_session_bytes ?? 107374182400) : link.g_bytes;
   const capFileBytes = isPhotographer ? (link.max_file_bytes ?? 21474836480) : link.g_fbytes;
 
-  if (!isPhotographer && !agreed)
+  if (!agreed)
     return NextResponse.json({ error: "Please agree to the upload terms first." }, { status: 400 });
 
   let contributorId: string, contributorName: string;

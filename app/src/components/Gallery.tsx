@@ -9,6 +9,7 @@ import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, 
 import ThemeToggle from "@/components/ThemeToggle";
 import SiteHeader from "@/components/SiteHeader";
 import DownloadPinModal from "@/components/DownloadPinModal";
+import DownloadIdentityModal from "@/components/DownloadIdentityModal";
 import type { DisplayMode } from "@/lib/siteIdentity";
 
 type Asset = { id: string; kind: "photo" | "video"; width: number; height: number; contributor_id: string; firstName: string; contributorLink: string | null; download_filename: string; download_url: string; thumb: string; preview: string };
@@ -73,6 +74,27 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
     persistCart(next);
   };
 
+  // Download-logging identity gate (db/014_download_logs.sql) — name required,
+  // email optional, asked once per browser per gallery (persisted in
+  // localStorage, same pattern as the cart above), then composes with the
+  // PIN gate below: identity first, PIN second, then the actual download.
+  const identityKey = `dlIdentity:${gallerySlug}`;
+  const [dlIdentity, setDlIdentity] = useState<{ name: string; email: string } | null>(null);
+  const [identityModalOpen, setIdentityModalOpen] = useState(false);
+  const pendingIdentityAction = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    try { const raw = localStorage.getItem(identityKey); if (raw) setDlIdentity(JSON.parse(raw)); } catch {}
+  }, [identityKey]);
+  // Appends the captured identity as query params on the actual download
+  // request — nothing here needs server-side verification (unlike the PIN
+  // below), so no cookie/round-trip is needed, just string-building at the
+  // point the request is made.
+  const withIdentity = (url: string) => {
+    if (!dlIdentity?.name) return url;
+    const sep = url.includes("?") ? "&" : "?";
+    return `${url}${sep}dlname=${encodeURIComponent(dlIdentity.name)}${dlIdentity.email ? `&dlemail=${encodeURIComponent(dlIdentity.email)}` : ""}`;
+  };
+
   // Per-gallery download PIN gate (db/013_download_restrictions.sql) —
   // separate from browsing, which stays open regardless. `requestDownload`
   // is a no-op passthrough in "open" mode (the overwhelming majority of
@@ -80,15 +102,27 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
   const [dlUnlocked, setDlUnlocked] = useState(downloadUnlocked);
   const [pinModalOpen, setPinModalOpen] = useState(false);
   const pendingDownload = useRef<(() => void) | null>(null);
-  const requestDownload = (action: () => void) => {
+  const proceedToPinGate = (action: () => void) => {
     if (downloadMode !== "pin" || dlUnlocked) { action(); return; }
     pendingDownload.current = action;
     setPinModalOpen(true);
   };
+  const requestDownload = (action: () => void) => {
+    if (!dlIdentity?.name) { pendingIdentityAction.current = action; setIdentityModalOpen(true); return; }
+    proceedToPinGate(action);
+  };
+  const onIdentityCaptured = (name: string, email: string) => {
+    const identity = { name, email };
+    setDlIdentity(identity);
+    try { localStorage.setItem(identityKey, JSON.stringify(identity)); } catch {}
+    setIdentityModalOpen(false);
+    const a = pendingIdentityAction.current; pendingIdentityAction.current = null;
+    if (a) proceedToPinGate(a);
+  };
   const onPinUnlocked = () => { setDlUnlocked(true); setPinModalOpen(false); pendingDownload.current?.(); pendingDownload.current = null; };
   const blockSave = (e: React.SyntheticEvent) => { e.preventDefault(); showToast("You can't do this."); };
   const clearCart = () => persistCart(new Set());
-  const cartDownloadUrl = `/g/${gallerySlug}/download?${[...cart].map((id) => `id=${id}`).join("&")}`;
+  const cartDownloadUrl = withIdentity(`/g/${gallerySlug}/download?${[...cart].map((id) => `id=${id}`).join("&")}`);
   // Cart items can come from any album, so resolve against everything
   // currently loaded, not just the open album.
   const allAssetsById = useMemo(() => {
@@ -148,7 +182,7 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
     if (dx > 0 && lb.i > 0) setLb({ ...lb, i: lb.i - 1 });
   };
 
-  const dl = (url: string, name: string) => { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); };
+  const dl = (url: string, name: string) => { const a = document.createElement("a"); a.href = withIdentity(url); a.download = name; document.body.appendChild(a); a.click(); a.remove(); };
   const totalPhotos = Object.values(assetsByAlbum).reduce((n, a) => n + a.length, 0);
 
   const crumbs = !single && album
@@ -291,6 +325,7 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
         <div className="fixed bottom-20 right-4 z-40 max-w-xs rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm shadow-2xl">{toast}</div>
       )}
 
+      {identityModalOpen && <DownloadIdentityModal onSuccess={onIdentityCaptured} onClose={() => setIdentityModalOpen(false)} />}
       {pinModalOpen && <DownloadPinModal gallerySlug={gallerySlug} onSuccess={onPinUnlocked} onClose={() => setPinModalOpen(false)} />}
 
       {cartOpen && (
@@ -317,7 +352,7 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
             </div>
             {cart.size > 0 && (
               <div className="space-y-2 border-t border-[var(--border)] p-4">
-                {downloadMode === "pin" && !dlUnlocked ? (
+                {!dlIdentity?.name || (downloadMode === "pin" && !dlUnlocked) ? (
                   <button onClick={() => requestDownload(() => { window.location.href = cartDownloadUrl; })} className="btn-primary flex w-full items-center justify-center gap-2 py-3"><Download size={16} /> Download all ({cart.size})</button>
                 ) : (
                   <a href={cartDownloadUrl} className="btn-primary flex w-full items-center justify-center gap-2 py-3"><Download size={16} /> Download all ({cart.size})</a>

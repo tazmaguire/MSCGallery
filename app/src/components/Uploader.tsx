@@ -54,7 +54,8 @@ export default function Uploader({ token, mode, gallerySlug, galleryName, terms,
   // Files are staged for review first — nothing uploads until Submit.
   const add = useCallback((files: FileList | File[]) => {
     if (submitted) return;
-    if (mode !== "photographer" && (!name.trim() || !agreed)) return;
+    if (!agreed) return;
+    if (mode !== "photographer" && !name.trim()) return;
     const next: Job[] = Array.from(files).map((file) => ({ id: crypto.randomUUID(), file, progress: 0, status: "staged" }));
     setJobs((j) => [...j, ...next]);
   }, [name, agreed, submitted, mode]);
@@ -78,7 +79,7 @@ export default function Uploader({ token, mode, gallerySlug, galleryName, terms,
   const staged = jobs.filter((j) => j.status === "staged");
   const done = jobs.filter((j) => j.status === "done").length;
   const failed = jobs.filter((j) => j.status === "error").length;
-  const ready = mode === "photographer" ? true : !!(name.trim() && agreed);
+  const ready = agreed && (mode === "photographer" || !!name.trim());
   const allDone = submitted && jobs.length > 0 && jobs.every((j) => j.status === "done");
   // Batch has stopped moving (nothing left staged/queued/uploading) but not
   // every file made it — the full-screen confirmation below only fires on a
@@ -137,32 +138,30 @@ export default function Uploader({ token, mode, gallerySlug, galleryName, terms,
       {mode === "photographer" ? (
         <div className="card mb-4 flex items-center gap-3 p-4">
           <Camera size={18} className="shrink-0 text-[var(--text-2)]" />
-          <span className="text-sm">Uploading as <strong>{contributorName || "Photographer"}</strong> — no name or terms needed, this link is already tied to you.</span>
+          <span className="text-sm">Uploading as <strong>{contributorName || "Photographer"}</strong> — no name needed, this link is already tied to you.</span>
         </div>
       ) : (
-        <>
-          <div className="card mb-4 space-y-3 p-4">
-            <div>
-              <label className="mb-1.5 block text-sm font-medium">Your name <span className="text-[var(--brand)]">*</span></label>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="So we can credit you" className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 text-base outline-none focus:border-[var(--text-2)]" />
-              <p className="data mt-1.5 text-[var(--text-3)]">Shown as "Shot by {name.trim().split(/\s+/)[0] || "your name"}" and written into the photo.</p>
-            </div>
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Email <span className="font-normal text-[var(--text-3)]">(optional)</span></label>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 text-base outline-none focus:border-[var(--text-2)]" />
-            </div>
+        <div className="card mb-4 space-y-3 p-4">
+          <div>
+            <label className="mb-1.5 block text-sm font-medium">Your name <span className="text-[var(--brand)]">*</span></label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="So we can credit you" className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 text-base outline-none focus:border-[var(--text-2)]" />
+            <p className="data mt-1.5 text-[var(--text-3)]">Shown as "Shot by {name.trim().split(/\s+/)[0] || "your name"}" and written into the photo.</p>
           </div>
-
-          {/* Consent — required */}
-          <label className="card mb-4 flex cursor-pointer gap-3 p-4">
-            <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5 h-5 w-5 shrink-0 accent-[var(--brand)]" />
-            <span className="text-sm text-[var(--text-2)]">
-              <span className="mb-1 flex items-center gap-1.5 font-medium text-[var(--text)]"><ShieldCheck size={14} /> Photo upload terms</span>
-              {terms}
-            </span>
-          </label>
-        </>
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Email <span className="font-normal text-[var(--text-3)]">(optional)</span></label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 text-base outline-none focus:border-[var(--text-2)]" />
+          </div>
+        </div>
       )}
+
+      {/* Consent — required in every mode, including photographer links. */}
+      <label className="card mb-4 flex cursor-pointer gap-3 p-4">
+        <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5 h-5 w-5 shrink-0 accent-[var(--brand)]" />
+        <span className="text-sm text-[var(--text-2)]">
+          <span className="mb-1 flex items-center gap-1.5 font-medium text-[var(--text)]"><ShieldCheck size={14} /> Photo upload terms</span>
+          {terms}
+        </span>
+      </label>
 
       {!submitted && (
         <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
@@ -170,7 +169,7 @@ export default function Uploader({ token, mode, gallerySlug, galleryName, terms,
           onClick={() => ready && inputRef.current?.click()}
           className={`cursor-pointer rounded-[var(--radius)] border-2 border-dashed p-10 text-center transition ${!ready ? "cursor-not-allowed border-[var(--border)] opacity-40" : dragging ? "border-[var(--accent)] bg-white/5" : "border-[var(--border)] hover:border-[var(--text-3)]"}`}>
           <Upload size={28} className="mx-auto mb-3 text-[var(--text-2)]" />
-          <p className="text-sm font-medium">{!ready ? (!name.trim() ? "Enter your name first" : "Agree to the terms to continue") : staged.length ? "Add more photos" : "Tap to choose, or drop photos here"}</p>
+          <p className="text-sm font-medium">{!ready ? (mode !== "photographer" && !name.trim() ? "Enter your name first" : "Agree to the terms to continue") : staged.length ? "Add more photos" : "Tap to choose, or drop photos here"}</p>
           <p className="data mt-1 text-[var(--text-3)]">Photos and video from your camera roll</p>
           <input ref={inputRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={(e) => e.target.files && add(e.target.files)} />
         </div>

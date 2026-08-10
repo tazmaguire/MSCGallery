@@ -140,22 +140,32 @@ app/                     Next.js 14 (App Router, TypeScript)
                          gallery/[slug]/search (bib-number search backend —
                          no public UI entry point right now, see below)
   src/components/        Gallery (+ cart, breadcrumb, download-PIN gate,
+                         download-identity gate (db/014, name required/email
+                         optional, asked once per browser per gallery via
+                         localStorage — composes with the PIN gate: identity
+                         first, then PIN if required, then the download),
                          right-click/drag-save deterrent, click-to-filter by
                          contributor name — see "Contributor attribution"
-                         below), DownloadPinModal,
+                         below), DownloadPinModal, DownloadIdentityModal,
                          Uploader (stage → submit → confirmation; serves all
                          three link modes — open/pin/photographer — the
                          photographer landing used to 404 unconditionally,
                          now shows "Uploading as <name>" and skips the PIN
-                         gate + consent card since the link is already bound
-                         to a contributor; per-file Retry on error, and the
-                         Submit-more/Go-to-gallery pair is reachable even on
-                         a partially-failed batch), ModerationQueue (grid, multi-select,
-                         approve-selected/approve-all, gallery filter tabs),
-                         GalleryManager (+ delete/edit/cover/tags/bib search,
-                         Access panel: password/unlisted/category/download-PIN
-                         (db/013, separate "Download protection" section —
-                         gates only the download action, not browsing),
+                         gate + the name/email card (contributor is already
+                         bound to the link) — but NOT the consent checkbox,
+                         which every mode still requires; per-file Retry on
+                         error, and the Submit-more/Go-to-gallery pair is
+                         reachable even on a partially-failed batch),
+                         PendingNotifier (browser Notification API — see
+                         "Admin browser notifications" below), ModerationQueue
+                         (grid, multi-select, approve-selected/approve-all,
+                         gallery filter tabs), GalleryManager (+ delete/edit/
+                         cover/tags/bib search, one consolidated "Settings"
+                         button/modal with tabs — Access (password/unlisted/
+                         category/download-PIN, db/013), Branding, Upload
+                         links, Downloads (db/014, read-only download-activity
+                         list) — replacing what used to be three separate
+                         top-level buttons each opening its own modal),
                          pro-upload
                          with attribution name+link and a Drive-style
                          per-file progress queue (XHR upload with progress,
@@ -178,7 +188,8 @@ app/                     Next.js 14 (App Router, TypeScript)
                          toggle, which never showed or offered Unlisted at all —
                          admin-side tagging UI stays, only the PUBLIC bib
                          search box was pulled), ThemeToggle, AdminNav (shows
-                         the deployed build's git SHA — see below), GalleryList
+                         the deployed build's git SHA — see below — and now
+                         mounts PendingNotifier next to ThemeToggle), GalleryList
                          (sort is a persisted, site-wide setting now —
                          site_settings.gallery_sort_mode, db/012 — read by the
                          public home page + embeds too, not just this admin's
@@ -257,6 +268,10 @@ db/013_download_restrictions.sql galleries.download_mode ('open'|'pin') +
                          separate from is_published/is_unlisted. Browsing
                          stays open; only the download action (single photo
                          or zip) is gated. See "Download restrictions" below.
+db/014_download_logs.sql download_logs table — one row per asset actually
+                         downloaded (name required, email optional,
+                         client-supplied and unverified). See "Download
+                         logs" below.
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -464,6 +479,65 @@ not the security boundary** — grid/lightbox images are already lower-res
 `thumb`/`preview` tiers, never the full-resolution file. The PIN gate on
 `/d/[id]` and the zip route is what actually protects the full-res
 deliverable.
+
+---
+
+## Download logs
+
+`download_logs` (db/014_download_logs.sql) records who downloaded what: a
+required name, an optional email, which asset, and `kind` ('single'|'zip').
+Identity is captured client-side by `DownloadIdentityModal` (`Gallery.tsx`),
+composing with the download-PIN gate above via the same "stash the pending
+action in a ref, show a modal, resume on success" pattern — identity is
+asked first (once per browser per gallery, persisted in `localStorage` under
+`dlIdentity:<slug>`, same convention as the cart), then the PIN gate if the
+gallery requires one, then the actual download. **Nothing here is verified
+server-side** — the name/email are exactly as trustworthy as the name a
+guest types into `Uploader.tsx`, sent as plain `dlname`/`dlemail` query
+params on the actual download request (both existing download triggers are
+GET navigations already, so this is just string-building, not a new request
+mechanism or a cookie).
+
+Both `/d/[id]/route.ts` and `g/[slug]/download/route.ts` write through
+`logDownload()` (`security.ts`) — best-effort, wrapped in try/catch, so a
+missing migration or any insert failure never blocks or slows the actual
+download. A zip logs one row per asset it actually contains (not one vague
+"N items" row), sharing the same name/email/timestamp.
+
+**Admin downloads are never logged.** GalleryManager's own "Download
+all"/"Download selected" links go straight to the download routes without
+ever passing through `Gallery.tsx`'s identity gate, so they carry no
+`dlname` — the routes treat a missing `dlname` as "don't log this one."
+
+Viewable per-gallery in GalleryManager's Settings modal → Downloads tab
+(read-only, `api/admin/galleries/[id]/download-logs`, latest 200 rows,
+degrades to an empty list rather than an error if `db/014` isn't applied
+yet — same convention as every other not-yet-migrated case in this app).
+
+---
+
+## Admin browser notifications
+
+`PendingNotifier` (mounted in `AdminNav.tsx` next to `ThemeToggle`) polls
+`api/admin/pending-count` (a thin wrapper around the existing
+`pendingCount()` in `lib/moderation.ts`) every 60s and fires a browser
+`Notification` when the site-wide pending total increases during the
+session — seeded from the page's initial server-rendered count, so a fresh
+page load never itself fires a notification for pre-existing pending items,
+only a genuine new arrival does. Clicking the notification focuses the tab
+and navigates to `/admin/queue`.
+
+Permission is requested from a real click on the bell icon (`Notification.
+requestPermission()` needs a user gesture; there is no on-load auto-prompt).
+Polling only runs once permission is `"granted"` — if it's `"denied"` or
+never granted, the bell shows a muted/disabled state and nothing polls.
+
+This is deliberately just page-open, foreground-tab notifications — no
+service worker, no push subscription, nothing persisted beyond what the
+browser already persists (`Notification.permission` itself). If a real
+push-notification system (works with the tab/browser closed) is ever
+wanted, that's a materially bigger addition — VAPID keys, a subscription
+table, a service worker — not an extension of this component.
 
 ---
 

@@ -104,3 +104,21 @@ export async function audit(userId: string | null, action: string, detail: any, 
   await q(`INSERT INTO audit_log (user_id, action, detail, ip_hash) VALUES ($1,$2,$3,$4)`,
     [userId, action, detail ? JSON.stringify(detail) : null, ipHash || null]);
 }
+
+/**
+ * Download activity log (db/014_download_logs.sql) — one row per asset
+ * actually downloaded, even inside a zip, so N assetIds means N rows
+ * sharing the same name/email/timestamp. Best-effort: a missing migration
+ * or any other insert failure must never block or slow the real download,
+ * so failures are swallowed here rather than propagated.
+ */
+export async function logDownload(galleryId: string, assetIds: string[], name: string, email: string | null, kind: "single" | "zip", ipHash: string | null) {
+  if (!assetIds.length) return;
+  try {
+    await q(
+      `INSERT INTO download_logs (gallery_id, asset_id, name, email, kind, ip_hash)
+       SELECT $1, unnest($2::uuid[]), $3, $4, $5, $6`,
+      [galleryId, assetIds, name, email || null, kind, ipHash]
+    );
+  } catch {}
+}

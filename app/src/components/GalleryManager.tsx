@@ -1,7 +1,7 @@
 "use client";
 /** Admin gallery manager: albums, add pro photos, three link modes + QR, move, edit, delete, branding. */
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star, Tag, Search, CheckSquare, Square } from "lucide-react";
+import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star, Tag, Search, CheckSquare, Square, Settings as SettingsIcon } from "lucide-react";
 import { DISPLAY_FONTS, BODY_FONTS, MONO_FONTS } from "@/lib/fonts";
 import { formatBytes, flatMonthlyCost, formatUSD } from "@/lib/storageCost";
 
@@ -25,7 +25,8 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
   const [albums, setAlbums] = useState<any[]>([]); const [active, setActive] = useState<string | null>(null);
   const [assets, setAssets] = useState<any[]>([]); const [sel, setSel] = useState<Set<string>>(new Set());
   const [links, setLinks] = useState<any[]>([]);
-  const [panel, setPanel] = useState<null | "links" | "newAlbum" | "brand" | "qr" | "editCredit" | "access" | "tags" | "renameGallery" | "renameAlbum">(null);
+  const [panel, setPanel] = useState<null | "settings" | "newAlbum" | "qr" | "editCredit" | "tags" | "renameGallery" | "renameAlbum">(null);
+  const [settingsTab, setSettingsTab] = useState<"access" | "branding" | "links">("access");
   const [qrToken, setQrToken] = useState<string>("");
   const [uploading, setUploading] = useState(false);
   const [proQueue, setProQueue] = useState<ProUploadItem[]>([]);
@@ -167,9 +168,7 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
             <input value={bibSearch} onChange={e => setBibSearch(e.target.value)} onKeyDown={e => e.key === "Enter" && runBibSearch()} placeholder="Bib number" className="w-28 bg-transparent py-2 text-sm outline-none" />
             {bibResults !== null && <button onClick={clearBibSearch} className="text-[var(--text-3)] hover:text-[var(--text)]"><X size={13} /></button>}
           </div>
-          <button onClick={() => setPanel("links")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Link2 size={15} />Upload links</button>
-          <button onClick={() => setPanel("brand")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Palette size={15} />Branding</button>
-          <button onClick={() => setPanel("access")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm">{gallery.view_password_hash ? <Lock size={15} /> : <KeyRound size={15} />}Access</button>
+          <button onClick={() => { setPanel("settings"); setSettingsTab("access"); }} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><SettingsIcon size={15} />Settings</button>
           <a href={`/g/${gallery.slug}/download`} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm" title="Whole-gallery zip — admin only, public visitors use the cart instead"><Download size={15} />Download all</a>
           <a href={`/g/${gallery.slug}`} target="_blank" className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Eye size={15} />View</a>
         </div>
@@ -303,11 +302,10 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
       )}
       </>}
 
-      {panel === "links" && <LinksPanel gallery={gallery} albums={albums} links={links} onClose={() => setPanel(null)} reload={loadLinks} showQr={(t) => { setQrToken(t); setPanel("qr"); }} />}
-      {panel === "qr" && <QRModal gallery={gallery} token={qrToken} onClose={() => setPanel("links")} />}
+      {panel === "settings" && <SettingsModal gallery={gallery} albums={albums} links={links} reloadLinks={loadLinks}
+        initialTab={settingsTab} onClose={() => setPanel(null)} onShowQr={(t) => { setQrToken(t); setPanel("qr"); }} />}
+      {panel === "qr" && <QRModal gallery={gallery} token={qrToken} onClose={() => setPanel("settings")} />}
       {panel === "newAlbum" && <NewAlbumModal galleryId={gallery.id} onClose={() => setPanel(null)} onDone={() => { setPanel(null); loadAlbums(); }} />}
-      {panel === "brand" && <BrandModal gallery={gallery} onClose={() => setPanel(null)} />}
-      {panel === "access" && <AccessModal gallery={gallery} onClose={() => setPanel(null)} />}
       {panel === "editCredit" && <EditCreditModal
         current={assets.find(a => a.id === [...sel][0])}
         contributorCount={new Set([...sel].map(id => assets.find(a => a.id === id)?.contributor).filter(Boolean)).size}
@@ -321,7 +319,56 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
   );
 }
 
-function LinksPanel({ gallery, albums, links, onClose, reload, showQr }: any) {
+// Consolidates what used to be three separate top-level buttons/modals
+// (Upload links, Branding, Access) into one "Settings" entry point with an
+// internal tab strip — same segmented-pill pattern used elsewhere in this
+// file (e.g. the download-protection toggle inside AccessSettings). Each
+// tab's content is the same component/logic as before, just no longer
+// wrapped in its own <Modal> — this one supplies the single shared chrome.
+function SettingsModal({ gallery, albums, links, reloadLinks, initialTab, onClose, onShowQr }: any) {
+  const [tab, setTab] = useState<"access" | "branding" | "links" | "downloads">(initialTab || "access");
+  const TABS: { key: "access" | "branding" | "links" | "downloads"; label: string; icon: any }[] = [
+    { key: "access", label: "Access", icon: Lock },
+    { key: "branding", label: "Branding", icon: Palette },
+    { key: "links", label: "Upload links", icon: Link2 },
+    { key: "downloads", label: "Downloads", icon: Download },
+  ];
+  return (
+    <Modal title="Settings" onClose={onClose} wide>
+      <div className="mb-4 flex w-fit gap-1 rounded-full border border-[var(--border)] p-0.5">
+        {TABS.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${tab === t.key ? "bg-[var(--brand)]/20 text-[var(--brand)]" : "text-[var(--text-3)] hover:text-[var(--text)]"}`}>
+            <t.icon size={13} />{t.label}
+          </button>
+        ))}
+      </div>
+      {tab === "access" && <AccessSettings gallery={gallery} />}
+      {tab === "branding" && <BrandSettings gallery={gallery} />}
+      {tab === "links" && <LinksSettings gallery={gallery} albums={albums} links={links} reload={reloadLinks} showQr={onShowQr} />}
+      {tab === "downloads" && <DownloadLogsTab galleryId={gallery.id} />}
+    </Modal>
+  );
+}
+function DownloadLogsTab({ galleryId }: any) {
+  const [logs, setLogs] = useState<any[] | null>(null);
+  useEffect(() => { fetch(`/api/admin/galleries/${galleryId}/download-logs`).then(r => r.json()).then(d => setLogs(d.logs || [])); }, [galleryId]);
+  if (logs === null) return <Loader2 size={18} className="mx-auto my-4 animate-spin text-[var(--text-3)]" />;
+  if (!logs.length) return <p className="data py-8 text-center text-[var(--text-3)]">No download activity yet.</p>;
+  return (
+    <div className="max-h-96 space-y-1.5 overflow-y-auto">
+      {logs.map(l => (
+        <div key={l.id} className="flex items-center gap-3 rounded-[var(--radius)] bg-[var(--bg-2)] px-3 py-2 text-sm">
+          <div className="min-w-0 flex-1">
+            <div className="truncate">{l.name}{l.email && <span className="text-[var(--text-3)]"> · {l.email}</span>}</div>
+            <div className="data text-[var(--text-3)]">{l.kind === "zip" ? "zip" : "single photo"}{l.original_filename && ` · ${l.original_filename}`} · {new Date(l.created_at).toLocaleString()}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+function LinksSettings({ gallery, albums, links, reload, showQr }: any) {
   const [mode, setMode] = useState<"open" | "pin" | "photographer">("open");
   const [pin, setPin] = useState(""); const [name, setName] = useState(""); const [albumId, setAlbumId] = useState(""); const [label, setLabel] = useState("");
   const [copied, setCopied] = useState("");
@@ -335,7 +382,7 @@ function LinksPanel({ gallery, albums, links, onClose, reload, showQr }: any) {
   const icon = (m: string) => m === "photographer" ? <Camera size={13} className="text-sky-400" /> : m === "pin" ? <KeyRound size={13} className="text-[var(--accent)]" /> : <Users size={13} className="text-emerald-400" />;
 
   return (
-    <Modal title="Upload links" onClose={onClose} wide>
+    <>
       <div className="mb-4 space-y-1.5">
         {links.map((l: any) => (
           <div key={l.id} className="flex items-center gap-2 rounded-[var(--radius)] bg-[var(--bg-2)] px-3 py-2 text-xs">
@@ -371,7 +418,7 @@ function LinksPanel({ gallery, albums, links, onClose, reload, showQr }: any) {
         <input value={label} onChange={e => setLabel(e.target.value)} placeholder="Note (optional, just for you)" className="mb-3 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)]" />
         <button onClick={create} disabled={mode === "pin" && pin.length < 4 || mode === "photographer" && !name.trim()} className="btn-primary w-full py-2.5 text-sm disabled:opacity-30">Create {mode} link</button>
       </div>
-    </Modal>
+    </>
   );
 }
 
@@ -385,7 +432,7 @@ function QRModal({ gallery, token, onClose }: any) {
     </Modal>
   );
 }
-function AccessModal({ gallery, onClose }: any) {
+function AccessSettings({ gallery }: any) {
   const [protectedNow, setProtectedNow] = useState(!!gallery.view_password_hash);
   const [password, setPassword] = useState(""); const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
   const [unlisted, setUnlisted] = useState(!!gallery.is_unlisted);
@@ -421,11 +468,11 @@ function AccessModal({ gallery, onClose }: any) {
       if (downloadMode === "pin" && downloadPin) body.download_pin = downloadPin;
       const r = await fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       if (!r.ok) { setErr((await r.json().catch(() => ({}))).error || "Couldn't save. Has the db/002_customisation.sql / db/007_config_and_categories.sql migration been applied?"); return; }
-      onClose(); location.reload();
+      location.reload();
     } finally { setBusy(false); }
   };
   return (
-    <Modal title="Access" onClose={onClose}>
+    <>
       <label className="mb-4 flex items-center gap-2 text-sm"><input type="checkbox" checked={protectedNow} onChange={e => setProtectedNow(e.target.checked)} className="h-4 w-4 accent-[var(--brand)]" />Password protect this gallery</label>
       {protectedNow && <>
         <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder={gallery.view_password_hash ? "New password (leave blank to keep current)" : "Password"} className="mb-1.5 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
@@ -467,7 +514,7 @@ function AccessModal({ gallery, onClose }: any) {
 
       {err && <p className="data mb-3 text-[var(--brand)]">{err}</p>}
       <button onClick={save} disabled={busy || (protectedNow && !gallery.view_password_hash && !password) || (downloadMode === "pin" && !gallery.download_pin_hash && !downloadPin)} className="btn-primary w-full py-2.5 disabled:opacity-30">{busy ? "Saving…" : "Save"}</button>
-    </Modal>
+    </>
   );
 }
 function TagsModal({ assetId, onClose }: any) {
@@ -556,7 +603,7 @@ function NewAlbumModal({ galleryId, onClose, onDone }: any) {
     </Modal>
   );
 }
-function BrandModal({ gallery, onClose }: any) {
+function BrandSettings({ gallery }: any) {
   const [primary, setPrimary] = useState(gallery.brand?.primary || "#E8442A");
   const [accent, setAccent] = useState(gallery.brand?.accent || "#D6E04B");
   const [intro, setIntro] = useState(gallery.brand?.intro || "");
@@ -567,7 +614,7 @@ function BrandModal({ gallery, onClose }: any) {
   const save = async () => {
     await fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" },
       body: JSON.stringify({ id: gallery.id, brand: { ...gallery.brand, primary, accent, intro, fontDisplay, fontBody, fontMono }, upload_terms: terms }) });
-    onClose(); location.reload();
+    location.reload();
   };
   const FontPick = ({ label, value, set, options }: any) => (
     <div>
@@ -580,7 +627,7 @@ function BrandModal({ gallery, onClose }: any) {
     </div>
   );
   return (
-    <Modal title="Branding" onClose={onClose} wide>
+    <>
       <div className="grid grid-cols-2 gap-3">
         <div><label className="data mb-1.5 block text-[var(--text-2)]">Primary (actions)</label><input type="color" value={primary} onChange={e => setPrimary(e.target.value)} className="h-10 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)]" /></div>
         <div><label className="data mb-1.5 block text-[var(--text-2)]">Accent (stripe)</label><input type="color" value={accent} onChange={e => setAccent(e.target.value)} className="h-10 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)]" /></div>
@@ -599,7 +646,7 @@ function BrandModal({ gallery, onClose }: any) {
       <label className="data mb-1.5 block text-[var(--text-2)]">Upload terms (the licence guests agree to)</label>
       <textarea value={terms} onChange={e => setTerms(e.target.value)} rows={5} className="field mb-4 text-sm" />
       <button onClick={save} className="btn-primary w-full py-2.5">Save branding</button>
-    </Modal>
+    </>
   );
 }
 function Modal({ title, children, onClose, wide }: any) {

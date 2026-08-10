@@ -25,7 +25,7 @@ import { NextRequest } from "next/server";
 import { q } from "@/lib/db";
 import { getObjectStream } from "@/lib/storage";
 import { downloadFilename } from "@/lib/naming";
-import { checkGalleryAccess, checkDownloadAccess } from "@/lib/security";
+import { checkGalleryAccess, checkDownloadAccess, clientIp, hashIp, logDownload } from "@/lib/security";
 import { getUser } from "@/lib/auth";
 import archiver from "archiver";
 import { PassThrough } from "node:stream";
@@ -80,7 +80,7 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
   // for the public/guest case. A logged-in admin can reach private albums
   // either way (whole-album bulk, or their own id-based selection).
   const rows = await q(
-    `SELECT a.public_key, a.kind, a.original_filename,
+    `SELECT a.id, a.public_key, a.kind, a.original_filename,
             al.name AS album_name, al.slug AS album_slug,
             COALESCE(c.credit_line, c.display_name) AS contributor,
             row_number() OVER (PARTITION BY a.album_id ORDER BY a.taken_at, a.created_at) AS seq
@@ -100,6 +100,13 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
   );
 
   if (!rows.length) return new Response("Nothing to download", { status: 404 });
+
+  // db/014_download_logs.sql — one row per asset in this zip, best-effort,
+  // done once up front (not inside the streaming IIFE below) so a slow log
+  // insert never holds up time-to-first-byte. No dlname (e.g. an admin's
+  // own bulk download) → nothing logged.
+  const dlname = url.searchParams.get("dlname");
+  if (dlname) logDownload(gallery.id, rows.map((r: any) => r.id), dlname, url.searchParams.get("dlemail"), "zip", hashIp(clientIp(req)));
 
   const zipName = ids.length
     ? `${gallery.short_code}_selected.zip`

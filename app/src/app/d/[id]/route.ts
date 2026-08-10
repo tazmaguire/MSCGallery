@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { q } from "@/lib/db";
 import { presignDownload } from "@/lib/storage";
 import { downloadFilename, firstName } from "@/lib/naming";
-import { checkGalleryAccess, checkDownloadAccess } from "@/lib/security";
+import { checkGalleryAccess, checkDownloadAccess, clientIp, hashIp, logDownload } from "@/lib/security";
 import { getUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +36,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return new Response("Locked", { status: 403 });
   if (!isAdmin && a.download_mode === "pin" && !checkDownloadAccess(req.cookies.get(`dp_${a.gallery_id}`)?.value, a.gallery_id))
     return new Response("PIN required", { status: 403 });
+
+  // db/014_download_logs.sql — dlname/dlemail come from the public gallery's
+  // identity gate (Gallery.tsx); an admin's own download via GalleryManager
+  // never carries them, so admin re-downloads aren't logged.
+  const dlname = req.nextUrl.searchParams.get("dlname");
+  if (dlname) logDownload(a.gallery_id, [params.id], dlname, req.nextUrl.searchParams.get("dlemail"), "single", hashIp(clientIp(req)));
 
   const ext = a.kind === "video" ? "mp4" : "jpg";
   const name = downloadFilename({ shortCode: a.short_code, location: a.location, contributor: a.contributor, seq: Number(a.seq), ext });

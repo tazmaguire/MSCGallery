@@ -272,6 +272,13 @@ db/014_download_logs.sql download_logs table — one row per asset actually
                          downloaded (name required, email optional,
                          client-supplied and unverified). See "Download
                          logs" below.
+db/015_link_no_limits.sql upload_links.no_limits — an explicit per-link
+                         override (any mode) that skips the file-size/
+                         session caps entirely, beating both the gallery's
+                         defaults and photographer mode's hardcoded generous
+                         defaults. Toggle lives in GalleryManager's Settings
+                         → Upload links tab (an Infinity-icon button per
+                         link, plus a checkbox at creation time).
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -306,6 +313,8 @@ Each migration is written with `IF NOT EXISTS` guards so re-running it is safe.
 - **upload_links**: three `mode`s — `open` (QR, moderated), `pin` (public link +
   bcrypt PIN, brute-force locked, moderated), `photographer` (unguessable token,
   bound to a named contributor, **skips moderation**, high caps, revocable).
+  `no_limits` (db/015) is orthogonal to mode — a per-link boolean that skips
+  the file-size/session caps entirely for that one link, regardless of mode.
 - **assets**: `visibility` pending|visible|rejected; `status` awaiting_upload→
   uploaded→processing→ready|failed. Guest uploads land `pending`; photographer/
   admin land `visible`. Nothing is public until `status='ready'` AND

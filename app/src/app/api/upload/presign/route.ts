@@ -47,9 +47,13 @@ export async function POST(req: NextRequest) {
   const source = isPhotographer ? "photographer" : "guest";
   if (!targetAlbum) return NextResponse.json({ error: "This event isn't set up for uploads yet." }, { status: 400 });
 
-  const capFiles = isPhotographer ? (link.max_files_per_session ?? 5000) : link.g_files;
-  const capBytes = isPhotographer ? (link.max_session_bytes ?? 107374182400) : link.g_bytes;
-  const capFileBytes = isPhotographer ? (link.max_file_bytes ?? 21474836480) : link.g_fbytes;
+  // db/015_link_no_limits.sql — an explicit per-link override that beats
+  // every other cap source, regardless of mode. Doesn't touch MIN_PHOTO_BYTES
+  // below (a compressed-copy quality check, not a size restriction).
+  const NO_LIMIT = Number.MAX_SAFE_INTEGER;
+  const capFiles = link.no_limits ? NO_LIMIT : isPhotographer ? (link.max_files_per_session ?? 5000) : link.g_files;
+  const capBytes = link.no_limits ? NO_LIMIT : isPhotographer ? (link.max_session_bytes ?? 107374182400) : link.g_bytes;
+  const capFileBytes = link.no_limits ? NO_LIMIT : isPhotographer ? (link.max_file_bytes ?? 21474836480) : link.g_fbytes;
 
   if (!agreed)
     return NextResponse.json({ error: "Please agree to the upload terms first." }, { status: 400 });

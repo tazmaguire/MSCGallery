@@ -1,7 +1,7 @@
 "use client";
 /** Admin gallery manager: albums, add pro photos, three link modes + QR, move, edit, delete, branding. */
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star, Tag, Search, CheckSquare, Square, Settings as SettingsIcon } from "lucide-react";
+import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star, Tag, Search, CheckSquare, Square, Settings as SettingsIcon, Infinity } from "lucide-react";
 import { DISPLAY_FONTS, BODY_FONTS, MONO_FONTS } from "@/lib/fonts";
 import { formatBytes, flatMonthlyCost, formatUSD } from "@/lib/storageCost";
 
@@ -371,12 +371,17 @@ function DownloadLogsTab({ galleryId }: any) {
 function LinksSettings({ gallery, albums, links, reload, showQr }: any) {
   const [mode, setMode] = useState<"open" | "pin" | "photographer">("open");
   const [pin, setPin] = useState(""); const [name, setName] = useState(""); const [albumId, setAlbumId] = useState(""); const [label, setLabel] = useState("");
+  const [noLimits, setNoLimits] = useState(false);
   const [copied, setCopied] = useState("");
   const site = typeof window !== "undefined" ? window.location.origin : "";
-  const create = async () => { await fetch("/api/admin/links", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ galleryId: gallery.id, mode, pin, contributorName: name, targetAlbumId: albumId || null, label }) }); setPin(""); setName(""); setLabel(""); reload(); };
+  const create = async () => { await fetch("/api/admin/links", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ galleryId: gallery.id, mode, pin, contributorName: name, targetAlbumId: albumId || null, label, noLimits }) }); setPin(""); setName(""); setLabel(""); setNoLimits(false); reload(); };
   const revoke = async (id: string) => {
     if (!confirm("Delete this link? People with the URL will no longer be able to upload. Photos already submitted through it are kept.")) return;
     await fetch("/api/admin/links", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) }); reload();
+  };
+  const toggleNoLimits = async (l: any) => {
+    await fetch("/api/admin/links", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: l.id, noLimits: !l.no_limits }) });
+    reload();
   };
   const copy = (t: string) => { navigator.clipboard.writeText(`${site}/u/${t}`); setCopied(t); setTimeout(() => setCopied(""), 1500); };
   const icon = (m: string) => m === "photographer" ? <Camera size={13} className="text-sky-400" /> : m === "pin" ? <KeyRound size={13} className="text-[var(--accent)]" /> : <Users size={13} className="text-emerald-400" />;
@@ -392,6 +397,10 @@ function LinksSettings({ gallery, albums, links, reload, showQr }: any) {
               {l.album_name && <span className="ml-1.5 text-[var(--text-3)]">→ {l.album_name}</span>}
               {l.label && <span className="ml-1.5 text-[var(--text-3)]">· {l.label}</span>}
             </span>
+            <button onClick={() => toggleNoLimits(l)} title={l.no_limits ? "No size/file limits — click to restore normal limits" : "Normal limits apply — click to remove all size/file limits for this link"}
+              className={l.no_limits ? "text-[var(--accent)]" : "text-[var(--text-3)] hover:text-[var(--text)]"}>
+              <Infinity size={14} />
+            </button>
             <button onClick={() => showQr(l.token)} className="text-[var(--text-2)] hover:text-[var(--text)]"><QrCode size={14} /></button>
             <button onClick={() => copy(l.token)} className="text-[var(--text-2)] hover:text-[var(--text)]">{copied === l.token ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}</button>
             <button onClick={() => revoke(l.id)} className="text-[var(--text-2)] hover:text-[var(--brand)]"><Trash2 size={14} /></button>
@@ -415,7 +424,11 @@ function LinksSettings({ gallery, albums, links, reload, showQr }: any) {
             {albums.filter((a: any) => !a.is_guest_album).map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </>}
-        <input value={label} onChange={e => setLabel(e.target.value)} placeholder="Note (optional, just for you)" className="mb-3 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)]" />
+        <input value={label} onChange={e => setLabel(e.target.value)} placeholder="Note (optional, just for you)" className="mb-2 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)]" />
+        <label className="mb-3 flex items-center gap-2 text-sm text-[var(--text-2)]">
+          <input type="checkbox" checked={noLimits} onChange={e => setNoLimits(e.target.checked)} className="h-4 w-4 accent-[var(--brand)]" />
+          <Infinity size={14} />No size/file limits for this link
+        </label>
         <button onClick={create} disabled={mode === "pin" && pin.length < 4 || mode === "photographer" && !name.trim()} className="btn-primary w-full py-2.5 text-sm disabled:opacity-30">Create {mode} link</button>
       </div>
     </>

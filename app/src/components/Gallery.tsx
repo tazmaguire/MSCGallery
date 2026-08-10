@@ -8,6 +8,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2, ExternalLink } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import SiteHeader from "@/components/SiteHeader";
+import DownloadPinModal from "@/components/DownloadPinModal";
 import type { DisplayMode } from "@/lib/siteIdentity";
 
 type Asset = { id: string; kind: "photo" | "video"; width: number; height: number; contributor_id: string; firstName: string; contributorLink: string | null; download_filename: string; download_url: string; thumb: string; preview: string };
@@ -26,11 +27,12 @@ function onThumbError(e: React.SyntheticEvent<HTMLImageElement>) {
   img.src = THUMB_FALLBACK;
 }
 
-export default function Gallery({ gallerySlug, galleryName, eventDate, location, intro, albums, assetsByAlbum, contributors, brand, siteName, siteLogoUrl, siteDisplayMode, coverUrl }: {
+export default function Gallery({ gallerySlug, galleryName, eventDate, location, intro, albums, assetsByAlbum, contributors, brand, siteName, siteLogoUrl, siteDisplayMode, coverUrl, downloadMode, downloadUnlocked }: {
   gallerySlug: string; galleryName: string; eventDate: string; location: string; intro?: string;
   albums: Album[]; assetsByAlbum: Record<string, Asset[]>; contributors: { id: string; name: string; count: number }[];
   brand: { primary: string; accent: string; logo?: string };
   siteName: string; siteLogoUrl: string | null; siteDisplayMode?: DisplayMode; coverUrl?: string | null;
+  downloadMode: "open" | "pin"; downloadUnlocked: boolean;
 }) {
   const single = albums.length === 1;
   const [openAlbum, setOpenAlbum] = useState<string | null>(single ? albums[0]?.id : null);
@@ -52,7 +54,8 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
   const cartKey = `cart:${gallerySlug}`;
   const [cart, setCart] = useState<Set<string>>(new Set());
   const [cartOpen, setCartOpen] = useState(false);
-  const [cartMsg, setCartMsg] = useState("");
+  const [toast, setToast] = useState("");
+  const showToast = (msg: string, ms = 3000) => { setToast(msg); setTimeout(() => setToast(""), ms); };
   useEffect(() => {
     try { setCart(new Set(JSON.parse(localStorage.getItem(cartKey) || "[]"))); } catch {}
   }, [cartKey]);
@@ -64,11 +67,26 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
     const next = new Set(cart);
     if (next.has(id)) { next.delete(id); }
     else {
-      if (next.size >= CART_MAX) { setCartMsg(`You can add up to ${CART_MAX} photos to your cart at once — download this batch first.`); setTimeout(() => setCartMsg(""), 5000); return; }
+      if (next.size >= CART_MAX) { showToast(`You can add up to ${CART_MAX} photos to your cart at once — download this batch first.`, 5000); return; }
       next.add(id);
     }
     persistCart(next);
   };
+
+  // Per-gallery download PIN gate (db/013_download_restrictions.sql) —
+  // separate from browsing, which stays open regardless. `requestDownload`
+  // is a no-op passthrough in "open" mode (the overwhelming majority of
+  // galleries), so the hot path is unaffected.
+  const [dlUnlocked, setDlUnlocked] = useState(downloadUnlocked);
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const pendingDownload = useRef<(() => void) | null>(null);
+  const requestDownload = (action: () => void) => {
+    if (downloadMode !== "pin" || dlUnlocked) { action(); return; }
+    pendingDownload.current = action;
+    setPinModalOpen(true);
+  };
+  const onPinUnlocked = () => { setDlUnlocked(true); setPinModalOpen(false); pendingDownload.current?.(); pendingDownload.current = null; };
+  const blockSave = (e: React.SyntheticEvent) => { e.preventDefault(); showToast("You can't do this."); };
   const clearCart = () => persistCart(new Set());
   const cartDownloadUrl = `/g/${gallerySlug}/download?${[...cart].map((id) => `id=${id}`).join("&")}`;
   // Cart items can come from any album, so resolve against everything
@@ -85,11 +103,17 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
 
   const album = albums.find((a) => a.id === openAlbum) || null;
   const albumAssets = openAlbum ? assetsByAlbum[openAlbum] || [] : [];
-  const assets = filterContributor ? albumAssets.filter((a) => a.contributor_id === filterContributor.id) : albumAssets;
+  // Matched by displayed first name, not contributor_id: guest uploaders get a
+  // new contributors row per upload session (no cross-session dedup server-side),
+  // so the same person visiting twice ends up with two different ids — filtering
+  // by id would silently miss half their photos. First-name matching is scoped
+  // to this gallery/album, not global, so the (accepted) tradeoff is two different
+  // people who share a first name being merged in the filtered view.
+  const assets = filterContributor ? albumAssets.filter((a) => a.firstName === filterContributor.name) : albumAssets;
   // Once a filter's active, paging through the lightbox stays within it too —
   // "browsing Sarah's photos" shouldn't suddenly show everyone else's.
   const lbList = lb
-    ? (filterContributor ? (assetsByAlbum[lb.album] || []).filter((a) => a.contributor_id === filterContributor.id) : assetsByAlbum[lb.album] || [])
+    ? (filterContributor ? (assetsByAlbum[lb.album] || []).filter((a) => a.firstName === filterContributor.name) : assetsByAlbum[lb.album] || [])
     : [];
   const current = lb ? lbList[lb.i] : null;
 
@@ -201,13 +225,13 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
           <div className="columns-2 gap-3 sm:columns-3 lg:columns-4 [&>*]:mb-3">
             {assets.map((a) => (
               <figure key={a.id} className={`group relative break-inside-avoid overflow-hidden rounded-[var(--radius)] bg-[var(--surface)] ${cart.has(a.id) ? "ring-2 ring-[var(--brand)]" : ""}`}>
-                <img src={a.thumb} alt="" loading="lazy" width={a.width} height={a.height} onError={onThumbError} onClick={() => setLb({ album: album.id, i: assets.indexOf(a) })} className="w-full cursor-zoom-in transition duration-300 group-hover:opacity-95" />
+                <img src={a.thumb} alt="" loading="lazy" width={a.width} height={a.height} onError={onThumbError} onClick={() => setLb({ album: album.id, i: assets.indexOf(a) })} onContextMenu={blockSave} draggable={false} className="w-full select-none cursor-zoom-in transition duration-300 group-hover:opacity-95 [-webkit-touch-callout:none]" />
                 {a.kind === "video" && <div className="pointer-events-none absolute inset-0 grid place-items-center"><div className="rounded-full bg-black/50 p-3 backdrop-blur"><Play size={18} fill="white" /></div></div>}
                 <button onClick={(e) => { e.stopPropagation(); toggleCart(a.id); }} title={cart.has(a.id) ? "Remove from cart" : "Add to cart"}
                   className={`absolute left-2 top-2 grid h-8 w-8 place-items-center rounded-full backdrop-blur transition focus:opacity-100 ${cart.has(a.id) ? "bg-[var(--brand)] text-white opacity-100" : "bg-black/40 text-white/90 opacity-0 group-hover:opacity-100"}`}>
                   {cart.has(a.id) ? <Check size={15} /> : <ShoppingCart size={15} />}
                 </button>
-                <button onClick={(e) => { e.stopPropagation(); dl(a.download_url, a.download_filename); }} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/40 text-white/90 opacity-0 backdrop-blur transition group-hover:opacity-100 focus:opacity-100" title="Download"><Download size={15} /></button>
+                <button onClick={(e) => { e.stopPropagation(); requestDownload(() => dl(a.download_url, a.download_filename)); }} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/40 text-white/90 opacity-0 backdrop-blur transition group-hover:opacity-100 focus:opacity-100" title="Download"><Download size={15} /></button>
                 <figcaption className="absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-black/40 py-1 pl-2.5 pr-1.5 text-white/90 opacity-0 backdrop-blur transition group-hover:opacity-100">
                   <button onClick={(e) => { e.stopPropagation(); setFilterContributor({ id: a.contributor_id, name: a.firstName }); }} className="data text-[11px] hover:underline" title={`See all photos by ${a.firstName}`}>SHOT BY {a.firstName}</button>
                   {a.contributorLink && <a href={a.contributorLink} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()} title={`${a.firstName}'s link`} className="text-white/70 hover:text-white"><ExternalLink size={11} /></a>}
@@ -227,7 +251,7 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
           </div>
           <div className="relative flex flex-1 items-center justify-center px-4" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
             {lb!.i > 0 && <button onClick={() => setLb({ ...lb!, i: lb!.i - 1 })} className="absolute left-2 z-10 rounded-full bg-white/10 p-2 transition hover:bg-white/20"><ChevronLeft size={24} /></button>}
-            {current.kind === "video" ? <video src={current.download_url} controls autoPlay className="max-h-[72vh] max-w-full" /> : <img src={current.preview} alt="" draggable={false} onError={onThumbError} className="max-h-[72vh] max-w-full select-none object-contain" />}
+            {current.kind === "video" ? <video src={current.download_url} controls autoPlay onContextMenu={blockSave} className="max-h-[72vh] max-w-full" /> : <img src={current.preview} alt="" draggable={false} onError={onThumbError} onContextMenu={blockSave} className="max-h-[72vh] max-w-full select-none object-contain [-webkit-touch-callout:none]" />}
             {lb!.i < lbList.length - 1 && <button onClick={() => setLb({ ...lb!, i: lb!.i + 1 })} className="absolute right-2 z-10 rounded-full bg-white/10 p-2 transition hover:bg-white/20"><ChevronRight size={24} /></button>}
           </div>
           <div className="border-t border-white/15 px-5 py-4">
@@ -248,7 +272,7 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
                 {/* Always the photo currently open (`current`, from lbList[lb.i]) — never
                     the cart. Cart selection has no bearing on this button whatsoever;
                     it's a completely separate piece of state. */}
-                <button onClick={() => dl(current.download_url, current.download_filename)} className="btn-primary flex flex-1 items-center justify-center gap-2 px-5 py-4 text-base"><Download size={18} /> Download full resolution — free</button>
+                <button onClick={() => requestDownload(() => dl(current.download_url, current.download_filename))} className="btn-primary flex flex-1 items-center justify-center gap-2 px-5 py-4 text-base"><Download size={18} /> Download full resolution — free</button>
               </div>
             </div>
           </div>
@@ -263,9 +287,11 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
         <span className="text-sm font-bold">{cart.size}</span>
       </button>
 
-      {cartMsg && (
-        <div className="fixed bottom-20 right-4 z-40 max-w-xs rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm shadow-2xl">{cartMsg}</div>
+      {toast && (
+        <div className="fixed bottom-20 right-4 z-40 max-w-xs rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm shadow-2xl">{toast}</div>
       )}
+
+      {pinModalOpen && <DownloadPinModal gallerySlug={gallerySlug} onSuccess={onPinUnlocked} onClose={() => setPinModalOpen(false)} />}
 
       {cartOpen && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/60" onClick={() => setCartOpen(false)}>
@@ -291,7 +317,11 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
             </div>
             {cart.size > 0 && (
               <div className="space-y-2 border-t border-[var(--border)] p-4">
-                <a href={cartDownloadUrl} className="btn-primary flex w-full items-center justify-center gap-2 py-3"><Download size={16} /> Download all ({cart.size})</a>
+                {downloadMode === "pin" && !dlUnlocked ? (
+                  <button onClick={() => requestDownload(() => { window.location.href = cartDownloadUrl; })} className="btn-primary flex w-full items-center justify-center gap-2 py-3"><Download size={16} /> Download all ({cart.size})</button>
+                ) : (
+                  <a href={cartDownloadUrl} className="btn-primary flex w-full items-center justify-center gap-2 py-3"><Download size={16} /> Download all ({cart.size})</a>
+                )}
                 <button onClick={clearCart} className="btn-ghost flex w-full items-center justify-center gap-2 py-2.5 text-sm"><Trash2 size={14} /> Clear cart</button>
               </div>
             )}

@@ -23,6 +23,7 @@ export default function GalleryList({ isOwner }: { isOwner: boolean }) {
   const [bulkCategory, setBulkCategory] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [sortErr, setSortErr] = useState("");
   const load = () => fetch("/api/admin/galleries").then(r => r.json()).then(d => setG(d.galleries));
   useEffect(() => {
     load();
@@ -32,9 +33,10 @@ export default function GalleryList({ isOwner }: { isOwner: boolean }) {
       if (mode) setSort(mode);
     });
   }, []);
-  const changeSort = (mode: SortKey) => {
-    setSort(mode);
-    fetch("/api/admin/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ gallery_sort_mode: mode }) });
+  const changeSort = async (mode: SortKey) => {
+    setSort(mode); setSortErr("");
+    const r = await fetch("/api/admin/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ gallery_sort_mode: mode }) });
+    if (!r.ok) setSortErr("Couldn't save — this may not have reached the public site. Has db/012_gallery_sort_mode.sql been applied?");
   };
   const toggle = (x: any) => fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: x.id, is_published: !x.is_published }) }).then(load);
   const totalBytes = useMemo(() => g.reduce((n, x) => n + Number(x.storage_bytes || 0), 0), [g]);
@@ -89,6 +91,7 @@ export default function GalleryList({ isOwner }: { isOwner: boolean }) {
           {isOwner && <button onClick={() => setShow(true)} className="btn-primary flex items-center gap-2 px-3 py-2 text-sm"><Plus size={15} />New gallery</button>}
         </div>
       </div>
+      {sortErr && <p className="data mb-4 -mt-2 text-[var(--brand)]">{sortErr}</p>}
 
       {g.length > 0 && (
         <div className="card mb-5 flex items-center gap-3 p-4">

@@ -42,6 +42,19 @@ export function checkGalleryAccess(cookieValue: string | undefined | null, galle
 }
 
 /**
+ * Per-gallery download PIN gate. Separate concept from the view password
+ * above — browsing can stay open while downloads (`/d/[id]` and the zip
+ * route) require this. Distinct HMAC namespace and cookie (`dp_<galleryId>`)
+ * so the token is never accidentally interchangeable with `gv_<galleryId>`.
+ */
+export function downloadAccessToken(galleryId: string): string {
+  return crypto.createHmac("sha256", process.env.AUTH_SECRET!).update(`gallery-download:${galleryId}`).digest("hex");
+}
+export function checkDownloadAccess(cookieValue: string | undefined | null, galleryId: string): boolean {
+  return !!cookieValue && safeEqual(cookieValue, downloadAccessToken(galleryId));
+}
+
+/**
  * Token-bucket rate limit. `rate` tokens/sec, `burst` max. Returns true if
  * allowed. One row per bucket key; refilled lazily on each check.
  */

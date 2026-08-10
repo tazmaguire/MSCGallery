@@ -64,7 +64,7 @@ export async function PATCH(req: NextRequest) {
   // to keep in sync.
   const { id, ids, reorder, brand, upload_terms, is_published, allow_uploads, name, location,
           max_files_per_session, max_session_bytes, max_file_bytes, cover_asset_id, view_password,
-          category_id, is_unlisted } = await req.json();
+          category_id, is_unlisted, download_mode, download_pin } = await req.json();
   // Drag-to-reorder (db/011_gallery_sort_order.sql) — a full ordered id list,
   // not a "same value to many ids" update like everything below, so it's its
   // own branch: index in the array becomes that gallery's new sort_order.
@@ -100,6 +100,26 @@ export async function PATCH(req: NextRequest) {
     const hash = view_password.trim() ? await bcrypt.hash(view_password.trim(), 12) : null;
     await q(`UPDATE galleries SET view_password_hash=$2 WHERE id = ANY($1::uuid[])`, [targets, hash]);
     await audit(user.id, hash ? "set_gallery_password" : "clear_gallery_password", { ids: targets }, hashIp(clientIp(req)));
+  }
+  // download_mode/download_pin — db/013_download_restrictions.sql. Unlike
+  // category_id/is_unlisted above, this must fail loudly on a missing
+  // migration rather than silently degrade: the admin thinks they've just
+  // locked downloads behind a PIN, so a silent no-op here would be worse
+  // than an error.
+  if (download_mode !== undefined) {
+    try {
+      if (download_mode === "pin" && download_pin) {
+        const hash = await bcrypt.hash(String(download_pin).trim(), 12);
+        await q(`UPDATE galleries SET download_mode='pin', download_pin_hash=$2 WHERE id = ANY($1::uuid[])`, [targets, hash]);
+      } else if (download_mode === "pin") {
+        // No new PIN typed — only actually switch to 'pin' where a hash already exists.
+        await q(`UPDATE galleries SET download_mode='pin' WHERE id = ANY($1::uuid[]) AND download_pin_hash IS NOT NULL`, [targets]);
+      } else {
+        await q(`UPDATE galleries SET download_mode='open' WHERE id = ANY($1::uuid[])`, [targets]);
+      }
+    } catch {
+      return NextResponse.json({ error: "Couldn't save download protection — has db/013_download_restrictions.sql been applied?" }, { status: 409 });
+    }
   }
   return NextResponse.json({ ok: true, count: targets.length });
 }

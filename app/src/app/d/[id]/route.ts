@@ -10,7 +10,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { q } from "@/lib/db";
 import { presignDownload } from "@/lib/storage";
 import { downloadFilename, firstName } from "@/lib/naming";
-import { checkGalleryAccess } from "@/lib/security";
+import { checkGalleryAccess, checkDownloadAccess } from "@/lib/security";
+import { getUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -30,8 +31,11 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     [params.id]
   );
   if (!a) return new Response("Not found", { status: 404 });
-  if (a.view_password_hash && !checkGalleryAccess(req.cookies.get(`gv_${a.gallery_id}`)?.value, a.gallery_id))
+  const isAdmin = !!(await getUser());
+  if (!isAdmin && a.view_password_hash && !checkGalleryAccess(req.cookies.get(`gv_${a.gallery_id}`)?.value, a.gallery_id))
     return new Response("Locked", { status: 403 });
+  if (!isAdmin && a.download_mode === "pin" && !checkDownloadAccess(req.cookies.get(`dp_${a.gallery_id}`)?.value, a.gallery_id))
+    return new Response("PIN required", { status: 403 });
 
   const ext = a.kind === "video" ? "mp4" : "jpg";
   const name = downloadFilename({ shortCode: a.short_code, location: a.location, contributor: a.contributor, seq: Number(a.seq), ext });

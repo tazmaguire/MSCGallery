@@ -389,6 +389,8 @@ function AccessModal({ gallery, onClose }: any) {
   const [protectedNow, setProtectedNow] = useState(!!gallery.view_password_hash);
   const [password, setPassword] = useState(""); const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
   const [unlisted, setUnlisted] = useState(!!gallery.is_unlisted);
+  const [downloadMode, setDownloadMode] = useState<"open" | "pin">(gallery.download_mode === "pin" ? "pin" : "open");
+  const [downloadPin, setDownloadPin] = useState("");
   const [categoryId, setCategoryId] = useState(gallery.category_id || "");
   const [categories, setCategories] = useState<any[]>([]);
   const [newCategory, setNewCategory] = useState("");
@@ -413,9 +415,10 @@ function AccessModal({ gallery, onClose }: any) {
     try {
       // Unchecked -> clear. Checked + typed a password -> set it. Checked + left
       // blank with a password already set -> omit the field, keep it as-is.
-      const body: any = { id: gallery.id, is_unlisted: unlisted, category_id: categoryId };
+      const body: any = { id: gallery.id, is_unlisted: unlisted, category_id: categoryId, download_mode: downloadMode };
       if (!protectedNow) body.view_password = "";
       else if (password) body.view_password = password;
+      if (downloadMode === "pin" && downloadPin) body.download_pin = downloadPin;
       const r = await fetch("/api/admin/galleries", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       if (!r.ok) { setErr((await r.json().catch(() => ({}))).error || "Couldn't save. Has the db/002_customisation.sql / db/007_config_and_categories.sql migration been applied?"); return; }
       onClose(); location.reload();
@@ -432,6 +435,24 @@ function AccessModal({ gallery, onClose }: any) {
       <label className="mb-1.5 flex items-center gap-2 text-sm"><input type="checkbox" checked={unlisted} onChange={e => setUnlisted(e.target.checked)} className="h-4 w-4 accent-[var(--brand)]" />Unlisted</label>
       <p className="data mb-4 text-[var(--text-3)]">Hidden from the home page listing, but still reachable by anyone with the direct link (or QR code). Independent of the Published toggle, which controls whether the link works at all.</p>
 
+      <div className="my-4 border-t border-[var(--border)]" />
+      <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Download protection</label>
+      <p className="data mb-2 text-[var(--text-3)]">Separate from the above — visitors can always browse; this only gates the download action (single photo or zip).</p>
+      <div className="mb-1.5 flex w-fit gap-1 rounded-full border border-[var(--border)] p-0.5">
+        {(["open", "pin"] as const).map(m => (
+          <button key={m} onClick={() => setDownloadMode(m)}
+            className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${downloadMode === m ? "bg-[var(--brand)]/20 text-[var(--brand)]" : "text-[var(--text-3)] hover:text-[var(--text)]"}`}>
+            {m === "open" ? "Open" : "PIN required"}
+          </button>
+        ))}
+      </div>
+      {downloadMode === "pin" && <>
+        <input value={downloadPin} onChange={e => setDownloadPin(e.target.value)}
+          placeholder={gallery.download_pin_hash ? "New PIN (leave blank to keep current)" : "PIN"}
+          className="mb-1.5 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
+        <p className="data mb-4 text-[var(--text-3)]">Visitors need this PIN before downloading any photo or the zip.</p>
+      </>}
+
       <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Category</label>
       <select value={categoryId} onChange={e => setCategoryId(e.target.value)} className="mb-2 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none">
         <option value="">No category</option>
@@ -445,7 +466,7 @@ function AccessModal({ gallery, onClose }: any) {
       {!categoryErr && <p className="data mb-4 text-[var(--text-3)]">New categories are available to every gallery once added.</p>}
 
       {err && <p className="data mb-3 text-[var(--brand)]">{err}</p>}
-      <button onClick={save} disabled={busy || (protectedNow && !gallery.view_password_hash && !password)} className="btn-primary w-full py-2.5 disabled:opacity-30">{busy ? "Saving…" : "Save"}</button>
+      <button onClick={save} disabled={busy || (protectedNow && !gallery.view_password_hash && !password) || (downloadMode === "pin" && !gallery.download_pin_hash && !downloadPin)} className="btn-primary w-full py-2.5 disabled:opacity-30">{busy ? "Saving…" : "Save"}</button>
     </Modal>
   );
 }

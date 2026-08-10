@@ -139,11 +139,24 @@ app/                     Next.js 14 (App Router, TypeScript)
                          gallery/unlock (gallery password check),
                          gallery/[slug]/search (bib-number search backend —
                          no public UI entry point right now, see below)
-  src/components/        Gallery (+ cart, breadcrumb), Uploader (stage → submit
-                         → confirmation), ModerationQueue (grid, multi-select,
+  src/components/        Gallery (+ cart, breadcrumb, download-PIN gate,
+                         right-click/drag-save deterrent, click-to-filter by
+                         contributor name — see "Contributor attribution"
+                         below), DownloadPinModal,
+                         Uploader (stage → submit → confirmation; serves all
+                         three link modes — open/pin/photographer — the
+                         photographer landing used to 404 unconditionally,
+                         now shows "Uploading as <name>" and skips the PIN
+                         gate + consent card since the link is already bound
+                         to a contributor; per-file Retry on error, and the
+                         Submit-more/Go-to-gallery pair is reachable even on
+                         a partially-failed batch), ModerationQueue (grid, multi-select,
                          approve-selected/approve-all, gallery filter tabs),
                          GalleryManager (+ delete/edit/cover/tags/bib search,
-                         Access panel: password/unlisted/category, pro-upload
+                         Access panel: password/unlisted/category/download-PIN
+                         (db/013, separate "Download protection" section —
+                         gates only the download action, not browsing),
+                         pro-upload
                          with attribution name+link and a Drive-style
                          per-file progress queue (XHR upload with progress,
                          handles multipart too — admin pro-uploads had no
@@ -169,7 +182,12 @@ app/                     Next.js 14 (App Router, TypeScript)
                          (sort is a persisted, site-wide setting now —
                          site_settings.gallery_sort_mode, db/012 — read by the
                          public home page + embeds too, not just this admin's
-                         browser tab; includes drag-to-reorder via a "Custom
+                         browser tab; the PATCH that saves it is now awaited
+                         and checked — it used to be fire-and-forget, so a
+                         failed save (most commonly db/012 not applied yet)
+                         looked fine in the admin dropdown but silently never
+                         reached the public site; now shows an inline error
+                         instead — includes drag-to-reorder via a "Custom
                          order" mode, native HTML5 DnD off a small grip handle,
                          see db/011_gallery_sort_order.sql — + multi-select +
                          bulk publish/hide/unlist/category — same select-all/
@@ -234,6 +252,11 @@ db/012_gallery_sort_mode.sql site_settings.gallery_sort_mode — the galleries
                          the public home page + embed/all + embed/category/[slug]
                          (src/lib/gallerySort.ts), not just the admin list.
                          Defaults to 'date_asc' (oldest to newest).
+db/013_download_restrictions.sql galleries.download_mode ('open'|'pin') +
+                         download_pin_hash — per-gallery download PIN,
+                         separate from is_published/is_unlisted. Browsing
+                         stays open; only the download action (single photo
+                         or zip) is gated. See "Download restrictions" below.
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -314,7 +337,9 @@ audit):
 - [x] Gallery-password-gated routes (`g/[slug]/page.tsx`, its `download/`,
       and `d/[id]`) all additionally require `checkGalleryAccess` when
       `view_password_hash` is set — checked independently of the visibility
-      rule, not a substitute for it.
+      rule, not a substitute for it. `d/[id]` and `download/` also require
+      `checkDownloadAccess` when `download_mode='pin'` (db/013, admin-bypassed
+      same as the view password) — see "Download restrictions" below.
 - [x] `api/gallery/[slug]/search/route.ts` (public bib search, added with H)
       — full rule inline, plus the same `checkGalleryAccess` password check;
       degrades to an empty result set (not an error) if `db/003_tagging.sql`
@@ -343,6 +368,16 @@ a dedicated pill next to the album title ("Shot by X ✕") is the only way to
 clear it — never a second click on the same name, so filter-on and filter-off
 are never the same gesture. The filter resets automatically on switching
 albums (`useEffect` on `openAlbum`).
+
+The filter matches by **displayed first name**, not `contributor_id`. Guest
+uploaders get a fresh `contributors` row per upload *session*
+(`api/upload/presign/route.ts` has no name-based dedup, unlike the admin
+ingest path) — the client's `sessionId` is only an in-memory `useRef`, so
+any page reload starts a new session and a new contributor row for the same
+person. Filtering by id would silently miss whatever that person uploaded
+in a different session. The accepted tradeoff of name-matching instead: two
+genuinely different people sharing a first name get merged in the filtered
+view — scoped to a single gallery/album, not a global merge.
 
 ---
 
@@ -396,6 +431,39 @@ album, so this doesn't open anything up for them). The same route also used
 to reject an admin's Download all/selected on a password-protected gallery
 unless they separately held the public password-gate cookie — admins are
 already authenticated via session, so that check is skipped for them now.
+
+---
+
+## Download restrictions
+
+`galleries.download_mode` (db/013_download_restrictions.sql) is a **separate
+concept from `is_published`/`is_unlisted`**, which control who can *browse*.
+This only gates the *download* action — a single photo (`/d/[id]`) or a zip
+(`g/[slug]/download`) — while browsing stays completely open. Mirrors the
+existing view-password architecture (`galleries.view_password_hash`,
+`checkGalleryAccess`) rather than inventing a new one: `download_pin_hash`
+(bcrypt), `checkDownloadAccess`/`downloadAccessToken` in `security.ts`, and
+a `dp_<galleryId>` cookie set by `api/gallery/download-unlock`, paralleling
+`gv_<galleryId>` from `api/gallery/unlock`.
+
+Both download routes check it with an admin bypass (`getUser()`), same
+pattern as their existing view-password check. Set from `GalleryManager`'s
+Access modal, in a visually separate "Download protection" section — not
+folded into the Live/Unlisted/Hidden status control, since it's an
+independent axis.
+
+Like `gv_<id>`, the `dp_<id>` cookie is a **non-revocable 30-day HMAC
+token** — rotating a gallery's PIN does not invalidate a visitor who already
+unlocked downloads for the rest of that 30 days. Same accepted gap the view
+password already has; worth remembering since "PIN required" reads as
+tighter control than the cookie model strictly delivers on rotation.
+
+The right-click/drag-save block on grid thumbnails and the lightbox
+(`onContextMenu` → a toast, `draggable={false}`) is a **cosmetic deterrent,
+not the security boundary** — grid/lightbox images are already lower-res
+`thumb`/`preview` tiers, never the full-resolution file. The PIN gate on
+`/d/[id]` and the zip route is what actually protects the full-res
+deliverable.
 
 ---
 
@@ -484,6 +552,11 @@ docker compose logs worker --tail 50
 - The zip route skips a bad/missing R2 key per-item rather than aborting the
   whole archive (one stale object shouldn't 502 an entire cart download) — keep
   that per-item try/catch if you touch `g/[slug]/download/route.ts`.
+- **The download-PIN check (`download_mode`) on `g/[slug]/download/route.ts`
+  and `d/[id]/route.ts` is admin-bypassed** (`getUser()`), same as the
+  view-password check — don't accidentally relax it the other way and start
+  blocking admins, or tighten it and start requiring the PIN twice for staff
+  who are already authenticated.
 - The worker verifies **magic bytes** and rejects/deletes impostor files. Keep
   that check.
 - **Don't add `USER app` back to `app/Dockerfile`.** `/app/public/thumbs` is

@@ -3,7 +3,7 @@ import Gallery from "@/components/Gallery"; import { notFound } from "next/navig
 import { googleFontsHref, fontStack } from "@/lib/fonts";
 import { siteConfig } from "@/lib/siteConfig";
 import { cookies } from "next/headers";
-import { checkGalleryAccess } from "@/lib/security";
+import { checkGalleryAccess, checkDownloadAccess } from "@/lib/security";
 import GalleryPasswordGate from "@/components/GalleryPasswordGate";
 export const dynamic = "force-dynamic";
 export default async function P({ params }: { params: { slug: string } }) {
@@ -11,6 +11,10 @@ export default async function P({ params }: { params: { slug: string } }) {
   const site = await siteConfig();
   if (g.view_password_hash && !checkGalleryAccess(cookies().get(`gv_${g.id}`)?.value, g.id))
     return <GalleryPasswordGate slug={g.slug} galleryName={g.name} siteName={site.name} />;
+  // db/013_download_restrictions.sql — g is SELECT *, so download_mode is
+  // simply undefined on an unmigrated DB and this falls back to "open" for free.
+  const downloadMode: "open" | "pin" = g.download_mode === "pin" ? "pin" : "open";
+  const downloadUnlocked = downloadMode === "pin" ? checkDownloadAccess(cookies().get(`dp_${g.id}`)?.value, g.id) : true;
   const albums = await q(
     `SELECT al.id, al.name, al.slug,
             (SELECT count(*) FROM assets a WHERE a.album_id=al.id AND a.visibility='visible' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS count
@@ -82,6 +86,7 @@ export default async function P({ params }: { params: { slug: string } }) {
     contributors={[...cc.values()].sort((a, b) => b.count - a.count)}
     brand={{ primary: g.brand?.primary || "#E8442A", accent: g.brand?.accent || "#D6E04B", logo: g.brand?.logo_key }}
     coverUrl={galleryCoverThumb ? `/thumbs/preview/${galleryCoverThumb}` : null}
+    downloadMode={downloadMode} downloadUnlocked={downloadUnlocked}
     siteName={site.name} siteLogoUrl={site.logoUrl} siteDisplayMode={site.displayMode} />
     </div>
   </>;

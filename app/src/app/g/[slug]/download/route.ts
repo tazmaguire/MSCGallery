@@ -25,7 +25,7 @@ import { NextRequest } from "next/server";
 import { q } from "@/lib/db";
 import { getObjectStream } from "@/lib/storage";
 import { downloadFilename } from "@/lib/naming";
-import { checkGalleryAccess } from "@/lib/security";
+import { checkGalleryAccess, checkDownloadAccess } from "@/lib/security";
 import { getUser } from "@/lib/auth";
 import archiver from "archiver";
 import { PassThrough } from "node:stream";
@@ -72,6 +72,8 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
   // hold that cookie.
   if (!isAdmin && gallery.view_password_hash && !checkGalleryAccess(req.cookies.get(`gv_${gallery.id}`)?.value, gallery.id))
     return new Response("Locked", { status: 403 });
+  if (!isAdmin && gallery.download_mode === "pin" && !checkDownloadAccess(req.cookies.get(`dp_${gallery.id}`)?.value, gallery.id))
+    return new Response("PIN required", { status: 403 });
 
   // Gather what to include. Non-admin requests only ever see visible assets
   // in non-private albums — that half of the OR is the security boundary

@@ -48,8 +48,9 @@ export async function POST(req: NextRequest) {
   if (!targetAlbum) return NextResponse.json({ error: "This event isn't set up for uploads yet." }, { status: 400 });
 
   // db/015_link_no_limits.sql — an explicit per-link override that beats
-  // every other cap source, regardless of mode. Doesn't touch MIN_PHOTO_BYTES
-  // below (a compressed-copy quality check, not a size restriction).
+  // every other cap source, regardless of mode, and also exempts the
+  // MIN_PHOTO_BYTES floor below — "no limits" means no limits, not "no
+  // limits except this one."
   const NO_LIMIT = Number.MAX_SAFE_INTEGER;
   const capFiles = link.no_limits ? NO_LIMIT : isPhotographer ? (link.max_files_per_session ?? 5000) : link.g_files;
   const capBytes = link.no_limits ? NO_LIMIT : isPhotographer ? (link.max_session_bytes ?? 107374182400) : link.g_bytes;
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
     catch { return NextResponse.json({ error: "Video uploads aren't set up yet — has db/009_video_album.sql been applied?" }, { status: 409 }); }
   }
   if (bytes > capFileBytes) return NextResponse.json({ error: "That file is larger than this link allows." }, { status: 413 });
-  if (kind === "photo" && bytes < MIN_PHOTO_BYTES)
+  if (!link.no_limits && kind === "photo" && bytes < MIN_PHOTO_BYTES)
     return NextResponse.json({ error: "That image looks like a compressed copy. Send the original from your camera roll rather than one that's been through WhatsApp." }, { status: 422 });
 
   let session = sessionId ? (await q(`SELECT * FROM upload_sessions WHERE id=$1 AND link_id=$2`, [sessionId, link.id]))[0] : null;

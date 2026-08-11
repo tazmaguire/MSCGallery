@@ -280,9 +280,15 @@ db/015_link_no_limits.sql upload_links.no_limits — an explicit per-link
                          override (any mode) that skips the file-size/
                          session caps entirely, beating both the gallery's
                          defaults and photographer mode's hardcoded generous
-                         defaults. Toggle lives in GalleryManager's Settings
-                         → Upload links tab (an Infinity-icon button per
-                         link, plus a checkbox at creation time).
+                         defaults, AND the MIN_PHOTO_BYTES "looks like a
+                         compressed copy" floor (originally left un-exempted
+                         as a "quality check, not a size restriction" — that
+                         distinction wasn't what people actually wanted from
+                         a "no limits" toggle, so it's included now too).
+                         Toggle lives in GalleryManager's Settings → Upload
+                         links tab (a labeled pill per link — "No limits" in
+                         green vs "Limited" — plus a checkbox at creation
+                         time).
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/

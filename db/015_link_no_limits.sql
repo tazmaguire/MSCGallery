@@ -8,9 +8,9 @@
 -- specific link — any mode — can be switched to fully uncapped without
 -- touching the gallery's defaults or every other link in it.
 --
--- Does NOT bypass the unrelated MIN_PHOTO_BYTES floor in
--- api/upload/presign/route.ts (a compressed-copy quality check, not a size
--- restriction) — only the file-size/session caps.
+-- Also exempts the MIN_PHOTO_BYTES floor in api/upload/presign/route.ts (the
+-- "looks like a compressed copy" rejection) — "no limits" means no limits,
+-- not every cap except that one.
 --
 -- NOT auto-applied to an existing DB — see "Database migrations" in
 -- HANDOFF.md. Apply by hand, once:

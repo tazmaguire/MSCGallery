@@ -379,8 +379,11 @@ function LinksSettings({ gallery, albums, links, reload, showQr }: any) {
     if (!confirm("Delete this link? People with the URL will no longer be able to upload. Photos already submitted through it are kept.")) return;
     await fetch("/api/admin/links", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) }); reload();
   };
+  const [toggleErr, setToggleErr] = useState("");
   const toggleNoLimits = async (l: any) => {
-    await fetch("/api/admin/links", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: l.id, noLimits: !l.no_limits }) });
+    setToggleErr("");
+    const r = await fetch("/api/admin/links", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: l.id, noLimits: !l.no_limits }) });
+    if (!r.ok) { setToggleErr((await r.json().catch(() => ({}))).error || "Couldn't save that change."); return; }
     reload();
   };
   const copy = (t: string) => { navigator.clipboard.writeText(`${site}/u/${t}`); setCopied(t); setTimeout(() => setCopied(""), 1500); };
@@ -388,6 +391,7 @@ function LinksSettings({ gallery, albums, links, reload, showQr }: any) {
 
   return (
     <>
+      {toggleErr && <p className="data mb-2 text-[var(--brand)]">{toggleErr}</p>}
       <div className="mb-4 space-y-1.5">
         {links.map((l: any) => (
           <div key={l.id} className="flex items-center gap-2 rounded-[var(--radius)] bg-[var(--bg-2)] px-3 py-2 text-xs">
@@ -397,9 +401,10 @@ function LinksSettings({ gallery, albums, links, reload, showQr }: any) {
               {l.album_name && <span className="ml-1.5 text-[var(--text-3)]">→ {l.album_name}</span>}
               {l.label && <span className="ml-1.5 text-[var(--text-3)]">· {l.label}</span>}
             </span>
-            <button onClick={() => toggleNoLimits(l)} title={l.no_limits ? "No size/file limits — click to restore normal limits" : "Normal limits apply — click to remove all size/file limits for this link"}
-              className={l.no_limits ? "text-[var(--accent)]" : "text-[var(--text-3)] hover:text-[var(--text)]"}>
-              <Infinity size={14} />
+            <button onClick={() => toggleNoLimits(l)}
+              title={l.no_limits ? "No size/file limits are applied — click to turn normal limits back on" : "Normal size/file limits apply — click to remove all limits for this link"}
+              className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition ${l.no_limits ? "bg-emerald-500/20 text-emerald-300" : "bg-white/5 text-[var(--text-3)] hover:text-[var(--text-2)]"}`}>
+              <Infinity size={11} />{l.no_limits ? "No limits" : "Limited"}
             </button>
             <button onClick={() => showQr(l.token)} className="text-[var(--text-2)] hover:text-[var(--text)]"><QrCode size={14} /></button>
             <button onClick={() => copy(l.token)} className="text-[var(--text-2)] hover:text-[var(--text)]">{copied === l.token ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}</button>

@@ -35,6 +35,11 @@ services:
     # for the one-time host migration this requires.
     volumes:
       - /srv/msc-thumbs:/app/public/thumbs
+      # Self-update state — shared with deploy/update-watcher.sh, which runs
+      # on the HOST (not in a container). The app can only read status.json/
+      # update.log and create an empty `request` file here; it has no other
+      # host access. See "Self-update" in HANDOFF.md.
+      - ./data/update:/app/update-state
   worker:
     build: ../worker
     restart: unless-stopped

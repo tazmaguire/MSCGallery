@@ -1,0 +1,16 @@
+[Unit]
+Description=MSC Gallery self-update watcher
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+# Adjust if the repo lives somewhere other than the documented install path.
+WorkingDirectory=/root/pr-gallery
+ExecStart=/root/pr-gallery/deploy/update-watcher.sh
+Restart=always
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target

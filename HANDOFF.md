@@ -130,10 +130,12 @@ app/                     Next.js 14 (App Router, TypeScript)
                          multi-select), login, account (self-service),
                          users (owner-only), settings (owner-only — Site tab:
                          global branding; Storage & domain tab: R2 + PUBLIC_SITE_URL;
-                         Embeds tab: generates the <iframe> snippets for embed/*)
+                         Embeds tab: generates the <iframe> snippets for embed/*;
+                         Updates tab: one-click redeploy, see "Self-update" below)
     api/                 upload/presign (THE security boundary), admin/*, auth,
                          admin/categories (gallery_categories CRUD),
                          admin/settings/storage (encrypted R2/domain config),
+                         admin/update (self-update status/trigger — see below),
                          internal/storage-config (worker fetches resolved R2
                          creds at startup, worker-secret authenticated),
                          gallery/unlock (gallery password check),
@@ -206,7 +208,9 @@ app/                     Next.js 14 (App Router, TypeScript)
                          (home page tile grid, reused by embed/all +
                          embed/category/[slug]), SiteHeader, GalleryPasswordGate,
                          AccountForm, UsersManager, SiteSettingsForm,
-                         StorageSettingsForm, SettingsTabs, EmbedsForm
+                         StorageSettingsForm, SettingsTabs, EmbedsForm,
+                         UpdatesPanel (polls api/admin/update every 15s — see
+                         "Self-update" below)
   src/lib/moderation.ts  single source of truth for pending-queue count/list/
                          galleries — every page reads through this, not its own query
   src/lib/siteIdentity.ts pure display-mode logic (resolveSiteIdentity), split
@@ -287,6 +291,9 @@ deploy/
   nginx/gallery.conf     the host nginx site (reference copy)
   db/                    schema copy auto-loaded by Postgres on first boot ONLY —
                          irrelevant for migrations against a live DB, see below
+  update-watcher.sh      self-update watcher — runs on the HOST, not in a
+                         container. See "Self-update" below.
+  msc-gallery-updater.service  systemd unit for the watcher — one-time install
 INSTALL-PORTAINER-IONOS.md   original install walkthrough
 ```
 
@@ -550,9 +557,68 @@ table, a service worker — not an extension of this component.
 
 ---
 
+## Self-update
+
+`/admin/settings/updates` (owner-only) lets you pull the latest code and
+redeploy from a button in the browser instead of SSH + `./deploy/update.sh`.
+It needs a one-time install on the server before it does anything.
+
+**Why it's not just "give the app container Docker access."** The obvious
+implementation — mount `/var/run/docker.sock` into the `app` container, add
+`git`/`docker` to its image, run `git pull && docker compose build && up` as
+a child process from an API route — would work, but it means the
+public-facing web app has root-equivalent control over the entire Docker
+host. If the app is ever compromised through any bug, that's a full host
+takeover, not just this app. The `app` container is deliberately minimal and
+runs as an unprivileged user (see the Dockerfile's own comments) — punching
+a Docker-socket hole in that for convenience isn't worth it.
+
+**What's actually built instead** — a host-side watcher:
+
+- `deploy/update-watcher.sh` runs continuously on the HOST as root (never in
+  a container), started via `deploy/msc-gallery-updater.service` (systemd).
+  Every 30s it `git fetch`es and writes what it finds (latest commit, how
+  many commits behind) to `deploy/data/update/status.json`.
+- That same directory is bind-mounted **read-write** into the `app`
+  container at `/app/update-state` (`docker-compose.yml`) — but the app can
+  only ever create an empty `request` file there (`api/admin/update`'s POST
+  handler) and read `status.json`/`update.log` (its GET handler, surfaced by
+  `UpdatesPanel.tsx`). It has no git, no Docker CLI, no socket, nothing that
+  executes anything.
+- The watcher is the only thing that ever turns `request`'s existence into
+  `git pull && docker compose build --build-arg GIT_SHA=... app worker &&
+  docker compose up -d` — the exact same sequence `deploy/update.sh` already
+  ran manually. **If the app container is ever compromised, the blast radius
+  is "can flip one file's existence," not "controls the host."**
+- `docker-entrypoint.sh` chowns `/app/update-state` to the `app` user at
+  container boot, same fix as the thumbs directory below it (a bind mount
+  arrives root-owned on a fresh checkout otherwise).
+
+**One-time install** (as root, from the repo root on the server):
+```
+ln -s $(pwd)/deploy/msc-gallery-updater.service /etc/systemd/system/msc-gallery-updater.service
+systemctl daemon-reload
+systemctl enable --now msc-gallery-updater.service
+systemctl status msc-gallery-updater.service   # confirm it's running
+```
+The unit assumes the repo lives at `/root/pr-gallery` (the documented install
+path) — edit `WorkingDirectory`/`ExecStart` in the `.service` file first if
+yours doesn't. After this, `/admin/settings/updates` shows "up to date" or
+"N commits behind" (checked every 30s by the watcher, polled every 15s by
+the page) and the "Update now" button actually does something; before
+installing it, the page says so and tells you to fall back to SSH.
+
+**Known limitation**: updating rebuilds and restarts the `app`/`worker`
+containers, which briefly takes the site offline (same as running
+`update.sh` manually always has) — `UpdatesPanel` says so in its copy. Not a
+zero-downtime deploy; this project doesn't have one.
+
+---
+
 ## The deploy loop (how to ship a change)
 
-There is no CI yet. To deploy after a code change:
+There is no CI yet. If the self-update watcher (above) is installed,
+`/admin/settings/updates` → "Update now" does all of this for you. Manually:
 ```
 # on the server, in /root/pr-gallery
 git pull                                   # once the repo + remote exist
@@ -620,6 +686,13 @@ docker compose logs worker --tail 50
 - **Never eager-load storage config** (see First Job #1).
 - **Never bind Docker to :80/:443** — host nginx owns them; other live sites share
   this box.
+- **Never give the `app` container Docker socket, git, or SSH access** to make
+  self-update "simpler." The whole point of `deploy/update-watcher.sh` running
+  on the host instead is that the public-facing container can only flip one
+  file's existence, never execute anything — see "Self-update" for the full
+  rationale. If a future change needs the app to trigger more than "please
+  update," extend the watcher's protocol (another sentinel file, another
+  field in status.json), don't give the container itself more access.
 - **Never commit `deploy/.env` or `deploy/data/`.**
 - **The upload presign route (`api/upload/presign`) is the security boundary** —
   album, moderation state, and caps are derived server-side from the link token,

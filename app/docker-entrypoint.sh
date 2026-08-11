@@ -19,6 +19,12 @@ if [ "$(id -u)" = "0" ]; then
   mkdir -p /app/public/thumbs
   chown -R app:app /app/public/thumbs
   chmod -R a+rX /app/public/thumbs
+  # Same bind-mount-arrives-root-owned issue as thumbs above, for the
+  # self-update state directory (deploy/data/update, see docker-compose.yml
+  # and "Self-update" in HANDOFF.md). Only the app user and the host-side
+  # watcher (running as root) ever touch this, so no chmod a+rX needed.
+  mkdir -p /app/update-state
+  chown -R app:app /app/update-state
   exec su-exec app "$@"
 fi
 exec "$@"

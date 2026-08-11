@@ -6,6 +6,7 @@ const TABS = [
   { href: "/admin/settings", label: "Site" },
   { href: "/admin/settings/storage", label: "Storage & domain" },
   { href: "/admin/settings/embeds", label: "Embeds" },
+  { href: "/admin/settings/updates", label: "Updates" },
 ];
 
 export default function SettingsTabs() {

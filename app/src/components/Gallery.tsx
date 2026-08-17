@@ -5,7 +5,8 @@
  * covers → photos. Downloads at photo / album / gallery. "Shot by Sarah".
  */
 import { useState, useMemo, useEffect, useRef } from "react";
-import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2, ExternalLink } from "lucide-react";
+import Link from "next/link";
+import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2, ExternalLink, Video } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import SiteHeader from "@/components/SiteHeader";
 import DownloadPinModal from "@/components/DownloadPinModal";
@@ -13,7 +14,7 @@ import DownloadIdentityModal from "@/components/DownloadIdentityModal";
 import type { DisplayMode } from "@/lib/siteIdentity";
 
 type Asset = { id: string; kind: "photo" | "video"; width: number; height: number; contributor_id: string; firstName: string; contributorLink: string | null; download_filename: string; download_url: string; thumb: string; preview: string };
-type Album = { id: string; name: string; slug: string; cover: string | null; count: number };
+type Album = { id: string; name: string; slug: string; cover: string | null; count: number; isShowcase?: boolean };
 
 // Swaps a broken thumbnail/preview <img> for an inline placeholder instead of
 // the browser's default broken-image icon. data:-fallback.dataset guards
@@ -239,18 +240,22 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
             </div>
 
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {albums.map((al) => (
-                <button key={al.id} onClick={() => setOpenAlbum(al.id)} className="group text-left">
+              {albums.map((al) => {
+                const tile = (
                   <div className="relative aspect-[3/2] overflow-hidden rounded-[var(--radius)] bg-[var(--surface)]">
-                    {al.cover ? <img src={al.cover} alt="" onError={onThumbError} className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]" /> : <div className="data grid h-full place-items-center text-[var(--text-3)]">no photos yet</div>}
+                    {al.cover ? <img src={al.cover} alt="" onError={onThumbError} className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]" /> : <div className="data grid h-full place-items-center text-[var(--text-3)]">{al.isShowcase ? "video" : "no photos yet"}</div>}
+                    {al.isShowcase && <div className="pointer-events-none absolute inset-0 grid place-items-center"><div className="rounded-full bg-black/50 p-3 backdrop-blur"><Play size={18} fill="white" /></div></div>}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                     <div className="absolute inset-x-0 bottom-0 flex items-end justify-between p-4">
                       <h2 className="display text-2xl text-white drop-shadow">{al.name}</h2>
-                      <span className="data rounded bg-black/40 px-2 py-0.5 text-white/90 backdrop-blur">{al.count}</span>
+                      {al.isShowcase ? <Video size={16} className="text-white/80" /> : <span className="data rounded bg-black/40 px-2 py-0.5 text-white/90 backdrop-blur">{al.count}</span>}
                     </div>
                   </div>
-                </button>
-              ))}
+                );
+                return al.isShowcase
+                  ? <Link key={al.id} href={`/g/${gallerySlug}/v/${al.slug}`} className="group text-left">{tile}</Link>
+                  : <button key={al.id} onClick={() => setOpenAlbum(al.id)} className="group text-left">{tile}</button>;
+              })}
             </div>
           </>
         )}

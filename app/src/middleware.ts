@@ -18,6 +18,13 @@ export function middleware(req: NextRequest) {
   // non-unlisted, password rules respected). Everything else stays as
   // strict as before.
   const embeddable = req.nextUrl.pathname.startsWith("/embed/");
+  // Video showcase albums (db/016_video_showcase_album.sql) embed a
+  // YouTube/Vimeo iframe — the only two origins allowed to be framed BY
+  // this site, and only on this one route. No frame-src directive existed
+  // before this, so every cross-origin iframe was already blocked outright
+  // by the default-src fallback; this is a narrow, deliberate exception,
+  // same discipline as the /embed/* frame-ancestors relaxation below.
+  const videoShowcase = /^\/g\/[^/]+\/v\//.test(req.nextUrl.pathname);
   // Presigned download/redirect + video playback come from the R2 endpoint host.
   res.headers.set("Content-Security-Policy", [
     "default-src 'self'",
@@ -27,6 +34,7 @@ export function middleware(req: NextRequest) {
     `img-src 'self' data: blob: ${s3} ${imgExtra}`,
     `media-src 'self' ${s3}`,
     `connect-src 'self' ${s3}`,
+    `frame-src ${videoShowcase ? "https://www.youtube-nocookie.com https://player.vimeo.com" : "'none'"}`,
     embeddable ? "frame-ancestors *" : "frame-ancestors 'none'", "base-uri 'self'", "form-action 'self'",
   ].join("; "));
   res.headers.set("X-Content-Type-Options", "nosniff");

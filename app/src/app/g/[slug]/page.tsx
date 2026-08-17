@@ -15,10 +15,21 @@ export default async function P({ params }: { params: { slug: string } }) {
   // simply undefined on an unmigrated DB and this falls back to "open" for free.
   const downloadMode: "open" | "pin" = g.download_mode === "pin" ? "pin" : "open";
   const downloadUnlocked = downloadMode === "pin" ? checkDownloadAccess(cookies().get(`dp_${g.id}`)?.value, g.id) : true;
-  const albums = await q(
-    `SELECT al.id, al.name, al.slug,
-            (SELECT count(*) FROM assets a WHERE a.album_id=al.id AND a.visibility='visible' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS count
-     FROM albums al WHERE al.gallery_id=$1 AND al.is_private=false ORDER BY al.sort_order`, [g.id]);
+  // db/016_video_showcase_album.sql — best-effort: an older DB that hasn't
+  // had the migration applied yet just falls back to no showcase albums
+  // (they can't exist yet either way) and no is_unlisted filtering.
+  let albums;
+  try {
+    albums = await q(
+      `SELECT al.id, al.name, al.slug, al.is_showcase, al.showcase,
+              (SELECT count(*) FROM assets a WHERE a.album_id=al.id AND a.visibility='visible' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS count
+       FROM albums al WHERE al.gallery_id=$1 AND al.is_private=false AND al.is_unlisted=false ORDER BY al.sort_order`, [g.id]);
+  } catch {
+    albums = await q(
+      `SELECT al.id, al.name, al.slug,
+              (SELECT count(*) FROM assets a WHERE a.album_id=al.id AND a.visibility='visible' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS count
+       FROM albums al WHERE al.gallery_id=$1 AND al.is_private=false ORDER BY al.sort_order`, [g.id]);
+  }
 
   // Custom covers (db/002_customisation.sql) — best-effort: an older DB that
   // hasn't had the migration applied yet just falls back to no custom cover.
@@ -36,7 +47,9 @@ export default async function P({ params }: { params: { slug: string } }) {
     const [gc] = await q(`SELECT COALESCE(cov.preview_key, cov.poster_key, cov.thumb_key) AS k FROM galleries gal JOIN assets cov ON cov.id = gal.cover_asset_id WHERE gal.id=$1 AND ${COVER_VISIBLE}`, [g.id]);
     galleryCoverThumb = gc?.k || null;
   } catch {}
-  const withPhotos = albums.filter((a: any) => Number(a.count) > 0);
+  // Showcase albums hold no real assets (v1 is embed-only), so the usual
+  // "has any visible photos" filter would wrongly hide them.
+  const withPhotos = albums.filter((a: any) => a.is_showcase || Number(a.count) > 0);
   let rows;
   try {
     rows = await q(
@@ -69,7 +82,10 @@ export default async function P({ params }: { params: { slug: string } }) {
   }
   const albumsOut = withPhotos.map((al: any) => ({
     id: al.id, name: al.name, slug: al.slug, count: Number(al.count),
-    cover: (albumCoverThumb[al.id] && `/thumbs/thumb/${albumCoverThumb[al.id]}`) || assetsByAlbum[al.id]?.[0]?.thumb || null,
+    isShowcase: !!al.is_showcase,
+    cover: al.is_showcase
+      ? (al.showcase?.thumbKey ? `/thumbs/${al.showcase.thumbKey}` : null)
+      : (albumCoverThumb[al.id] && `/thumbs/thumb/${albumCoverThumb[al.id]}`) || assetsByAlbum[al.id]?.[0]?.thumb || null,
   }));
   const fonts = { display: g.brand?.fontDisplay, body: g.brand?.fontBody, mono: g.brand?.fontMono };
   const fontHref = googleFontsHref(fonts);

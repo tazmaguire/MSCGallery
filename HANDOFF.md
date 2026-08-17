@@ -116,7 +116,10 @@ app/                     Next.js 14 (App Router, TypeScript)
   src/app/
     g/[slug]/            public gallery (page, password-gated if set) + download/
                          (streaming zip, also password-gated + cart-selection aware,
-                         admin-only unless it's a cart selection)
+                         admin-only unless it's a cart selection) + v/[albumSlug]
+                         (video showcase album page — see "Video showcase
+                         albums" below; also password-gated by the parent
+                         gallery, has its own visibility check)
     d/[id]/              download redirect → presigned R2 URL (free egress, also
                          password-gated)
     u/[token]/           guest upload page (open / pin modes)
@@ -136,6 +139,8 @@ app/                     Next.js 14 (App Router, TypeScript)
                          admin/categories (gallery_categories CRUD),
                          admin/settings/storage (encrypted R2/domain config),
                          admin/update (self-update status/trigger — see below),
+                         admin/albums/[id]/thumbnail (video showcase album
+                         thumbnail upload — local disk, same as branding),
                          internal/storage-config (worker fetches resolved R2
                          creds at startup, worker-secret authenticated),
                          gallery/unlock (gallery password check),
@@ -189,7 +194,16 @@ app/                     Next.js 14 (App Router, TypeScript)
                          way to change it was the galleries list's Live/Hidden
                          toggle, which never showed or offered Unlisted at all —
                          admin-side tagging UI stays, only the PUBLIC bib
-                         search box was pulled), ThemeToggle, AdminNav (shows
+                         search box was pulled; NewAlbumModal now has a
+                         Photo album / Video showcase type picker, and an
+                         active showcase album swaps the entire photo-grid/
+                         bulk-tools panel for ShowcaseAlbumPanel — rename,
+                         its own Hidden/Unlisted/Public pill, thumbnail
+                         upload, video URL, autoplay, and a CaptionEditor —
+                         see "Video showcase albums" below), CaptionEditor
+                         (small contentEditable + execCommand Bold/Italic/
+                         Link toolbar — deliberately not a full editor
+                         library for a 3-command requirement), ThemeToggle, AdminNav (shows
                          the deployed build's git SHA — see below — and now
                          mounts PendingNotifier next to ThemeToggle), GalleryList
                          (sort is a persisted, site-wide setting now —
@@ -289,6 +303,12 @@ db/015_link_no_limits.sql upload_links.no_limits — an explicit per-link
                          links tab (a labeled pill per link — "No limits" in
                          green vs "Limited" — plus a checkbox at creation
                          time).
+db/016_video_showcase_album.sql albums.is_showcase / is_unlisted / showcase
+                         (jsonb) — a video showcase album: a genuinely
+                         different album type (not the hidden is_video_album
+                         above) holding one curated YouTube/Vimeo embed, an
+                         admin-uploaded thumbnail, and a rich-text caption.
+                         See "Video showcase albums" below.
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -468,6 +488,78 @@ album, so this doesn't open anything up for them). The same route also used
 to reject an admin's Download all/selected on a password-protected gallery
 unless they separately held the public password-gate cookie — admins are
 already authenticated via session, so that check is skipped for them now.
+
+---
+
+## Video showcase albums
+
+**Not the same thing as the section above.** `is_video_album` (db/009) is a
+hidden, always-private dumping ground for raw guest-uploaded video
+originals — nobody's meant to see it. A video showcase album
+(`albums.is_showcase`, db/016_video_showcase_album.sql) is the opposite:
+curated, admin-authored, and explicitly meant to be public — one embedded
+YouTube/Vimeo video (v1; direct upload deferred — see below), an
+admin-uploaded thumbnail, and a short rich-text caption, presented as its
+own full-page item in a gallery's album list instead of a photo grid. Point
+is to host the video but drive traffic to view it on the gallery site
+rather than going straight to YouTube/Vimeo.
+
+- **Data**: `albums.is_showcase` / `is_unlisted` are real columns (queried
+  in `WHERE`); `albums.showcase` (jsonb) bundles `{videoSource, videoUrl,
+  autoplay, captionHtml, thumbKey}` — same "loosely-related config in one
+  jsonb bag" convention as `galleries.brand`. No unique-per-gallery index —
+  unlike the singular hidden video album, a gallery can have several
+  showcase albums. `is_unlisted` mirrors `galleries.is_unlisted` exactly:
+  combined with `is_private`, gives the same Hidden/Unlisted/Public
+  tri-state already used for whole galleries, just scoped to one album.
+- **v1 is embed-only, deliberately** — a directly-uploaded video meant for
+  public playback would need a *real* transcode (H.264/AAC, faststart) to
+  play reliably everywhere, which the worker doesn't do today (see "Video
+  uploads" above: it deliberately skips re-encoding entirely, because
+  output was never meant to be public). Embeds sidestep that whole problem.
+  `src/lib/videoEmbed.ts`'s `parseVideoUrl()`/`embedSrc()` handle both
+  YouTube and Vimeo URL shapes, re-validated server-side in `api/admin/
+  albums` PATCH — never trust the client's own parsing.
+- **Its own route, not client-side state**: `g/[slug]/v/[albumSlug]/page.tsx`
+  — necessary because "Unlisted" only means anything if there's a real URL
+  to reach it by. Same gallery-level password gate as the main gallery page
+  (`checkGalleryAccess`/`GalleryPasswordGate`); `is_private=true` 404s the
+  route entirely; `is_unlisted` doesn't gate the route at all (that's the
+  point — direct link still works), it only excludes the album from the
+  `g/[slug]` grid-listing query.
+- **The public "All albums" grid**: showcase albums have zero real `assets`
+  rows (embed-only), so the existing "hide albums with no visible photos"
+  filter in `g/[slug]/page.tsx` explicitly exempts `is_showcase` albums —
+  otherwise they'd never appear at all. Their tile uses `showcase.thumbKey`
+  as the cover and links to `/g/[slug]/v/[slug]` via a real `<Link>`, not
+  `Gallery.tsx`'s usual `setOpenAlbum` client-state toggle.
+- **First HTML-rendering surface in this app** — `captionHtml` is the only
+  admin-supplied field ever rendered via `dangerouslySetInnerHTML` anywhere
+  in this codebase. Sanitized with `sanitize-html` (allowlist: `b, strong,
+  i, em, a, br, p` only) **on write**, in `api/admin/albums` PATCH — the
+  public page trusts the stored value and re-sanitizing on every read isn't
+  needed as long as that PATCH handler stays the only write path. If you
+  ever add another way to set `showcase.captionHtml`, sanitize there too.
+- **CSP**: no `frame-src` directive existed before this feature — every
+  cross-origin iframe was already blocked outright by the `default-src`
+  fallback. `middleware.ts` now allows `https://www.youtube-nocookie.com`
+  and `https://player.vimeo.com`, scoped narrowly to the `/g/*/v/*` path
+  only (regex on `req.nextUrl.pathname`), same discipline as the existing
+  `/embed/*` `frame-ancestors` relaxation right next to it.
+- **Autoplay is always muted** (`?autoplay=1&mute=1` / `&muted=1`) — no
+  browser allows unmuted autoplay; visitors can unmute once it's playing.
+  The admin-facing autoplay checkbox says so.
+- **Thumbnail storage**: `api/admin/albums/[id]/thumbnail` mirrors the
+  branding logo/favicon upload (`api/admin/settings/upload`) exactly — same
+  local-disk `THUMB_DIR` convention every thumbnail in this app already
+  uses (never R2), no server-side resize (the app container has no
+  image-processing library; that's the worker's job).
+- **Admin panel**: `NewAlbumModal` gets a Photo album / Video showcase type
+  picker at creation. An active showcase album swaps `GalleryManager`'s
+  entire photo-grid/bulk-tools block for `ShowcaseAlbumPanel` — rename, its
+  own Hidden/Unlisted/Public pill, thumbnail upload, video URL, autoplay,
+  `CaptionEditor` — **deliberately no download link and no bulk-select
+  tools**, since there's no per-photo asset grid to operate on at all.
 
 ---
 
@@ -699,6 +791,18 @@ docker compose logs worker --tail 50
   rationale. If a future change needs the app to trigger more than "please
   update," extend the watcher's protocol (another sentinel file, another
   field in status.json), don't give the container itself more access.
+- **`albums.showcase.captionHtml` must only ever be written through
+  `api/admin/albums`'s PATCH handler**, which runs it through `sanitize-html`
+  before it touches the database. It's the only admin-supplied HTML this
+  app renders anywhere (`dangerouslySetInnerHTML` on the public showcase
+  page trusts the stored value completely, no re-sanitizing on read). Any
+  new code path that can set this field needs the same sanitization, not a
+  copy-paste of the raw value.
+- **The CSP `frame-src` allowance for YouTube/Vimeo is scoped to `/g/*/v/*`
+  only** (`middleware.ts`, a pathname regex right next to the existing
+  `/embed/*` `frame-ancestors` exemption). Don't widen it to a blanket
+  allowance — every other route still blocks all cross-origin iframes via
+  the `default-src` fallback, which is deliberate.
 - **Never commit `deploy/.env` or `deploy/data/`.**
 - **The upload presign route (`api/upload/presign`) is the security boundary** —
   album, moderation state, and caps are derived server-side from the link token,

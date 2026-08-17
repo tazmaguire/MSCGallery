@@ -1,9 +1,11 @@
 "use client";
 /** Admin gallery manager: albums, add pro photos, three link modes + QR, move, edit, delete, branding. */
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star, Tag, Search, CheckSquare, Square, Settings as SettingsIcon, Infinity } from "lucide-react";
+import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star, Tag, Search, CheckSquare, Square, Settings as SettingsIcon, Infinity, Video } from "lucide-react";
 import { DISPLAY_FONTS, BODY_FONTS, MONO_FONTS } from "@/lib/fonts";
 import { formatBytes, flatMonthlyCost, formatUSD } from "@/lib/storageCost";
+import { parseVideoUrl } from "@/lib/videoEmbed";
+import CaptionEditor from "@/components/CaptionEditor";
 
 type ProUploadItem = { id: string; name: string; bytes: number; progress: number; status: "queued" | "uploading" | "done" | "error"; error?: string };
 const PRO_PARALLEL_PARTS = 4;
@@ -39,7 +41,11 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
   const style = { ["--brand" as any]: gallery.brand?.primary || "#E8442A" } as React.CSSProperties;
 
   const loadAlbums = useCallback(() => fetch(`/api/admin/albums?gallery=${gallery.id}`).then(r => r.json()).then(d => { setAlbums(d.albums); if (!active && d.albums[0]) setActive(d.albums[0].id); }), [gallery.id, active]);
-  const loadAssets = useCallback(() => { if (active) fetch(`/api/admin/assets?album=${active}`).then(r => r.json()).then(d => setAssets(d.assets)); }, [active]);
+  const loadAssets = useCallback(() => {
+    if (!active) return;
+    if (albums.find(a => a.id === active)?.is_showcase) return; // no per-asset grid for showcase albums
+    fetch(`/api/admin/assets?album=${active}`).then(r => r.json()).then(d => setAssets(d.assets));
+  }, [active, albums]);
   const loadLinks = useCallback(() => fetch(`/api/admin/links?gallery=${gallery.id}`).then(r => r.json()).then(d => setLinks(d.links)), [gallery.id]);
   useEffect(() => { loadAlbums(); loadLinks(); }, []);
   useEffect(() => { loadAssets(); setSel(new Set()); }, [active]);
@@ -195,12 +201,18 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
       <div className="mb-4 flex flex-wrap gap-2">
         {albums.map(al => (
           <button key={al.id} onClick={() => setActive(al.id)} className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${active === al.id ? "bg-[var(--text)] text-[var(--bg)]" : "border border-[var(--border)] text-[var(--text-2)]"}`}>
-            {al.is_private && <Lock size={12} />}{al.is_guest_album && <Users size={12} />}{al.name}<span className="opacity-60">{al.visible}</span>
+            {al.is_showcase ? <Video size={12} /> : <>{al.is_private && <Lock size={12} />}{al.is_guest_album && <Users size={12} />}</>}
+            {al.name}
+            {!al.is_showcase && <span className="opacity-60">{al.visible}</span>}
           </button>
         ))}
         <button onClick={() => setPanel("newAlbum")} className="flex items-center gap-1.5 rounded-full border border-dashed border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text-3)]"><FolderPlus size={14} />Album</button>
       </div>
 
+      {album?.is_showcase ? (
+        <ShowcaseAlbumPanel album={album} onReload={loadAlbums} onRename={() => setPanel("renameAlbum")} />
+      ) : (
+      <>
       {album && (
         <div className="mb-4 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -299,6 +311,8 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
       </>}
 
@@ -612,13 +626,132 @@ function RenameModal({ title, initial, onClose, onSave }: any) {
   );
 }
 function NewAlbumModal({ galleryId, onClose, onDone }: any) {
+  const [type, setType] = useState<"photo" | "showcase">("photo");
   const [name, setName] = useState(""); const [priv, setPriv] = useState(false);
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
+  const create = async () => {
+    setBusy(true); setErr("");
+    const r = await fetch("/api/admin/albums", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(type === "showcase" ? { galleryId, name, isShowcase: true } : { galleryId, name, isPrivate: priv }) });
+    setBusy(false);
+    if (!r.ok) { setErr((await r.json().catch(() => ({}))).error || "Couldn't create album."); return; }
+    onDone();
+  };
   return (
     <Modal title="New album" onClose={onClose}>
-      <input value={name} onChange={e => setName(e.target.value)} placeholder="Official Photography" className="mb-3 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
-      <label className="mb-4 flex items-center gap-2 text-sm"><input type="checkbox" checked={priv} onChange={e => setPriv(e.target.checked)} className="h-4 w-4 accent-[var(--brand)]" />Private (hidden from public — a holding area)</label>
-      <button onClick={() => fetch("/api/admin/albums", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ galleryId, name, isPrivate: priv }) }).then(onDone)} disabled={!name} className="btn-primary w-full py-2.5 disabled:opacity-30">Create album</button>
+      <div className="mb-3 grid grid-cols-2 gap-2">
+        {([["photo", "Photo album", FolderPlus], ["showcase", "Video showcase", Video]] as const).map(([t, lbl, Ic]) => (
+          <button key={t} onClick={() => setType(t)} className={`rounded-[var(--radius)] border p-3 text-left transition ${type === t ? "border-[var(--text-2)] bg-[var(--surface)]" : "border-[var(--border)] text-[var(--text-2)]"}`}>
+            <Ic size={16} className="mb-1.5" /><div className="text-sm font-semibold">{lbl}</div>
+          </button>
+        ))}
+      </div>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder={type === "showcase" ? "Race Highlights" : "Official Photography"} className="mb-3 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 outline-none focus:border-[var(--text-2)]" />
+      {type === "photo" ? (
+        <label className="mb-4 flex items-center gap-2 text-sm"><input type="checkbox" checked={priv} onChange={e => setPriv(e.target.checked)} className="h-4 w-4 accent-[var(--brand)]" />Private (hidden from public — a holding area)</label>
+      ) : (
+        <p className="data mb-4 text-[var(--text-3)]">Starts hidden — configure the video, then set it Public.</p>
+      )}
+      {err && <p className="data mb-3 text-[var(--brand)]">{err}</p>}
+      <button onClick={create} disabled={!name || busy} className="btn-primary w-full py-2.5 disabled:opacity-30">{busy ? "Creating…" : "Create album"}</button>
     </Modal>
+  );
+}
+// Video showcase album (db/016_video_showcase_album.sql) — a from-scratch
+// small panel, not a stripped-down version of the photo-album toolbar
+// above. Deliberately has no download link and no bulk-select tools: there
+// is no per-photo asset grid here at all, just the one embedded video.
+function ShowcaseAlbumPanel({ album, onReload, onRename }: any) {
+  const [videoUrl, setVideoUrl] = useState(album.showcase?.videoUrl || "");
+  const [autoplay, setAutoplay] = useState(!!album.showcase?.autoplay);
+  const [captionHtml, setCaptionHtml] = useState(album.showcase?.captionHtml || "");
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState(""); const [saved, setSaved] = useState(false);
+  const [thumbBusy, setThumbBusy] = useState(false); const [thumbErr, setThumbErr] = useState("");
+
+  // Hidden/Unlisted/Public — same tri-state derivation and visual pattern as
+  // the whole-gallery status pill above (galleryStatus/setGalleryStatus),
+  // now scoped to this one album via is_private + is_unlisted (db/016).
+  const albumStatus: "public" | "unlisted" | "hidden" = album.is_private ? "hidden" : album.is_unlisted ? "unlisted" : "public";
+  const setAlbumStatus = async (status: "public" | "unlisted" | "hidden") => {
+    const body: any = { id: album.id };
+    if (status === "hidden") { body.is_private = true; body.is_unlisted = false; }
+    else { body.is_private = false; body.is_unlisted = status === "unlisted"; }
+    await fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    onReload();
+  };
+  const STATUS_STYLE: Record<string, string> = {
+    public: "bg-emerald-500/20 text-emerald-300",
+    unlisted: "bg-[var(--accent)]/20 text-[var(--accent)]",
+    hidden: "bg-white/5 text-[var(--text-2)]",
+  };
+
+  const videoRefValid = !videoUrl || !!parseVideoUrl(videoUrl);
+
+  const save = async () => {
+    setBusy(true); setErr(""); setSaved(false);
+    const r = await fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: album.id, showcase: { videoUrl, autoplay, captionHtml } }) });
+    setBusy(false);
+    if (!r.ok) { setErr((await r.json().catch(() => ({}))).error || "Couldn't save."); return; }
+    setSaved(true); onReload();
+  };
+
+  const uploadThumb = async (file: File) => {
+    setThumbBusy(true); setThumbErr("");
+    const form = new FormData(); form.append("file", file);
+    const r = await fetch(`/api/admin/albums/${album.id}/thumbnail`, { method: "POST", body: form });
+    setThumbBusy(false);
+    if (!r.ok) { setThumbErr((await r.json().catch(() => ({}))).error || "Couldn't upload thumbnail."); return; }
+    onReload();
+  };
+
+  return (
+    <div className="mb-6 max-w-xl space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <button onClick={onRename} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Pencil size={15} />Rename</button>
+        <div className="flex items-center gap-1 rounded-full border border-[var(--border)] p-0.5" title="Public: listed in All albums. Unlisted: reachable by direct link only. Hidden: not reachable at all.">
+          {(["public", "unlisted", "hidden"] as const).map(s => (
+            <button key={s} onClick={() => setAlbumStatus(s)}
+              className={`rounded-full px-2.5 py-1 text-xs font-medium capitalize transition ${albumStatus === s ? STATUS_STYLE[s] : "text-[var(--text-3)] hover:text-[var(--text)]"}`}>
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Thumbnail</label>
+        <div className="flex items-center gap-3">
+          {album.showcase?.thumbKey && <img src={`/thumbs/${album.showcase.thumbKey}`} alt="" className="h-16 w-24 rounded-[var(--radius)] object-cover" />}
+          <label className="btn-ghost cursor-pointer px-3 py-2 text-sm">
+            {thumbBusy ? "Uploading…" : album.showcase?.thumbKey ? "Replace" : "Upload"}
+            <input type="file" accept="image/png,image/webp,image/jpeg" className="hidden" onChange={e => e.target.files?.[0] && uploadThumb(e.target.files[0])} />
+          </label>
+        </div>
+        {thumbErr && <p className="data mt-1.5 text-[var(--brand)]">{thumbErr}</p>}
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Video URL (YouTube or Vimeo)</label>
+        <input value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="https://youtube.com/watch?v=… or https://vimeo.com/…"
+          className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2.5 text-sm outline-none focus:border-[var(--text-2)]" />
+        {!videoRefValid && <p className="data mt-1.5 text-[var(--brand)]">Couldn't recognize that as a YouTube or Vimeo link.</p>}
+      </div>
+
+      <div>
+        <label className="mb-1.5 flex items-center gap-2 text-sm text-[var(--text-2)]"><input type="checkbox" checked={autoplay} onChange={e => setAutoplay(e.target.checked)} className="h-4 w-4 accent-[var(--brand)]" />Autoplay</label>
+        <p className="data text-[var(--text-3)]">Browsers only allow autoplay when muted — visitors can unmute once it's playing.</p>
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-sm font-medium text-[var(--text-2)]">Caption</label>
+        <CaptionEditor value={captionHtml} onChange={setCaptionHtml} />
+      </div>
+
+      {err && <p className="data text-[var(--brand)]">{err}</p>}
+      {saved && !err && <p className="data text-emerald-400">Saved.</p>}
+      <button onClick={save} disabled={busy || !videoRefValid} className="btn-primary px-5 py-2.5 text-sm disabled:opacity-30">{busy ? "Saving…" : "Save"}</button>
+    </div>
   );
 }
 function BrandSettings({ gallery }: any) {

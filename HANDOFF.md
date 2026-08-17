@@ -803,6 +803,16 @@ docker compose logs worker --tail 50
   `/embed/*` `frame-ancestors` exemption). Don't widen it to a blanket
   allowance — every other route still blocks all cross-origin iframes via
   the `default-src` fallback, which is deliberate.
+- **Every internal link INTO a showcase album page must be a plain `<a>`,
+  never `next/link`.** CSP headers are only applied when the browser loads
+  a fresh document — a Next.js client-side `<Link>` transition keeps
+  enforcing the *previous* page's CSP (which has no `frame-src` for
+  YouTube/Vimeo, since that's scoped to this one route), so the embed gets
+  blocked with "This content is blocked" until the next full reload. Bit us
+  once already: the album-grid tile in `Gallery.tsx` used `<Link>` at
+  first, and worked on refresh but never on the first click. Any future
+  entry point into `/g/[slug]/v/[albumSlug]` needs the same plain-`<a>`
+  treatment, not just that one tile.
 - **Never commit `deploy/.env` or `deploy/data/`.**
 - **The upload presign route (`api/upload/presign`) is the security boundary** —
   album, moderation state, and caps are derived server-side from the link token,

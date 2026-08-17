@@ -5,7 +5,6 @@
  * covers → photos. Downloads at photo / album / gallery. "Shot by Sarah".
  */
 import { useState, useMemo, useEffect, useRef } from "react";
-import Link from "next/link";
 import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2, ExternalLink, Video } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import SiteHeader from "@/components/SiteHeader";
@@ -252,8 +251,17 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
                     </div>
                   </div>
                 );
+                // A plain <a>, not next/link — this navigation must be a full
+                // page load, not a client-side transition. CSP headers
+                // (middleware.ts's frame-src allowance for YouTube/Vimeo,
+                // scoped to this one route) are only applied when the
+                // browser loads a fresh document; a client-side Link
+                // transition keeps enforcing the CURRENT page's CSP, which
+                // has no frame-src for the embed, so the iframe would get
+                // blocked ("This content is blocked") until the next full
+                // reload. A plain anchor sidesteps that entirely.
                 return al.isShowcase
-                  ? <Link key={al.id} href={`/g/${gallerySlug}/v/${al.slug}`} className="group text-left">{tile}</Link>
+                  ? <a key={al.id} href={`/g/${gallerySlug}/v/${al.slug}`} className="group text-left">{tile}</a>
                   : <button key={al.id} onClick={() => setOpenAlbum(al.id)} className="group text-left">{tile}</button>;
               })}
             </div>

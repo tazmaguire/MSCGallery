@@ -269,10 +269,18 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
         )}
 
         {album && (
-          <div className="columns-2 gap-3 sm:columns-3 lg:columns-4 [&>*]:mb-3">
+          // A real grid, not CSS multi-column masonry — multi-column fills
+          // top-to-bottom PER COLUMN before moving to the next one, so the
+          // configured sort order (per-album photo_sort_mode) read
+          // top-to-bottom-then-left-to-right instead of the expected
+          // left-to-right-then-top-to-bottom reading order. Trades the
+          // masonry look (natural aspect ratios, no gaps) for guaranteed
+          // correct reading order — same aspect-square/object-cover tile
+          // convention GalleryManager's own admin asset grid already uses.
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {assets.map((a) => (
-              <figure key={a.id} className={`group relative break-inside-avoid overflow-hidden rounded-[var(--radius)] bg-[var(--surface)] ${cart.has(a.id) ? "ring-2 ring-[var(--brand)]" : ""}`}>
-                <img src={a.thumb} alt="" loading="lazy" width={a.width} height={a.height} onError={onThumbError} onClick={() => setLb({ album: album.id, i: assets.indexOf(a) })} onContextMenu={blockSave} draggable={false} className="w-full select-none cursor-zoom-in transition duration-300 group-hover:opacity-95 [-webkit-touch-callout:none]" />
+              <figure key={a.id} className={`group relative overflow-hidden rounded-[var(--radius)] bg-[var(--surface)] ${cart.has(a.id) ? "ring-2 ring-[var(--brand)]" : ""}`}>
+                <img src={a.thumb} alt="" loading="lazy" onError={onThumbError} onClick={() => setLb({ album: album.id, i: assets.indexOf(a) })} onContextMenu={blockSave} draggable={false} className="aspect-square w-full select-none object-cover cursor-zoom-in transition duration-300 group-hover:opacity-95 [-webkit-touch-callout:none]" />
                 {a.kind === "video" && <div className="pointer-events-none absolute inset-0 grid place-items-center"><div className="rounded-full bg-black/50 p-3 backdrop-blur"><Play size={18} fill="white" /></div></div>}
                 <button onClick={(e) => { e.stopPropagation(); toggleCart(a.id); }} title={cart.has(a.id) ? "Remove from cart" : "Add to cart"}
                   className={`absolute left-2 top-2 grid h-8 w-8 place-items-center rounded-full backdrop-blur transition focus:opacity-100 ${cart.has(a.id) ? "bg-[var(--brand)] text-white opacity-100" : "bg-black/40 text-white/90 opacity-0 group-hover:opacity-100"}`}>

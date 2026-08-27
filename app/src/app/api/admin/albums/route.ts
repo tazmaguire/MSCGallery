@@ -60,17 +60,18 @@ export async function PATCH(req: NextRequest) {
   }
   if (name) await q(`UPDATE albums SET name=$2 WHERE id=$1`, [id, name]);
   if (cover_asset_id !== undefined) await q(`UPDATE albums SET cover_asset_id=$2 WHERE id=$1`, [id, cover_asset_id]);
-  // photo_sort_mode (db/017_album_photo_sort.sql) — the order public
-  // visitors see this album's photos in. Validated against the same
-  // allow-list the column's own CHECK constraint enforces, so a bad value
-  // fails loudly here rather than as an opaque constraint-violation 500.
+  // photo_sort_mode (db/017 + db/018_album_photo_sort_by_source.sql) — the
+  // order public visitors see this album's photos in. Validated against
+  // the same allow-list the column's own CHECK constraint enforces, so a
+  // bad value fails loudly here rather than as an opaque
+  // constraint-violation 500.
   if (photo_sort_mode !== undefined) {
-    if (!["date_asc", "date_desc", "name_asc", "name_desc"].includes(photo_sort_mode))
+    if (!["upload_asc", "upload_desc", "metadata_asc", "metadata_desc", "name_asc", "name_desc"].includes(photo_sort_mode))
       return NextResponse.json({ error: "Invalid sort order." }, { status: 400 });
     try {
       await q(`UPDATE albums SET photo_sort_mode=$2 WHERE id=$1`, [id, photo_sort_mode]);
     } catch {
-      return NextResponse.json({ error: "Couldn't save — has db/017_album_photo_sort.sql been applied?" }, { status: 409 });
+      return NextResponse.json({ error: "Couldn't save — has db/018_album_photo_sort_by_source.sql been applied?" }, { status: 409 });
     }
   }
   // showcase (db/016) — video source/autoplay/caption for a video showcase

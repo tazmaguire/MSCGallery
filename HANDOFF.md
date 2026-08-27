@@ -202,10 +202,11 @@ app/                     Next.js 14 (App Router, TypeScript)
                          upload, video URL, autoplay, and a CaptionEditor —
                          see "Video showcase albums" below; a photo album's
                          toolbar also has a "Public order" select
-                         (db/017_album_photo_sort.sql, saves immediately —
-                         separate from the client-only assetSort dropdown
-                         below the grid, see "Per-album photo order"
-                         below), CaptionEditor
+                         (db/018_album_photo_sort_by_source.sql, saves
+                         immediately, checks the response and surfaces
+                         errors — separate from the client-only assetSort
+                         dropdown below the grid, see "Per-album photo
+                         order" below), CaptionEditor
                          (small contentEditable + execCommand Bold/Italic/
                          Link toolbar — deliberately not a full editor
                          library for a 3-command requirement), ThemeToggle, AdminNav (shows
@@ -314,11 +315,18 @@ db/016_video_showcase_album.sql albums.is_showcase / is_unlisted / showcase
                          above) holding one curated YouTube/Vimeo embed, an
                          admin-uploaded thumbnail, and a rich-text caption.
                          See "Video showcase albums" below.
-db/017_album_photo_sort.sql albums.photo_sort_mode ('date_asc'|'date_desc'|
-                         'name_asc'|'name_desc', default 'date_desc') — the
-                         order PUBLIC VISITORS see a photo album's photos in,
-                         admin-chosen per album. See "Per-album photo order"
-                         below.
+db/017_album_photo_sort.sql albums.photo_sort_mode — superseded by db/018
+                         immediately below (shipped, likely never actually
+                         applied anywhere given the bug it had — see there).
+db/018_album_photo_sort_by_source.sql redefines photo_sort_mode to
+                         ('upload_asc'|'upload_desc'|'metadata_asc'|
+                         'metadata_desc'|'name_asc'|'name_desc', default
+                         'upload_asc') — splits the old blended "date" concept
+                         into two honest, separate options (upload time vs
+                         EXIF capture time) and flips the default to
+                         oldest-first by upload time, the more robust of the
+                         two since it's never null. See "Per-album photo
+                         order" below.
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -577,43 +585,70 @@ rather than going straight to YouTube/Vimeo.
 
 ## Per-album photo order
 
-`albums.photo_sort_mode` (db/017_album_photo_sort.sql) — before this, every
-album in every gallery used one fixed public order (newest-first by EXIF
-`taken_at`, falling back to upload time `created_at`), which looked
-effectively random whenever capture times were missing or tied (routine for
-guest phone uploads with stripped EXIF, or a burst of photos landing in the
-same second). Now it's a real per-album, admin-chosen setting: `date_asc` /
-`date_desc` / `name_asc` / `name_desc`, defaulting to `date_desc` so no
-existing album's order changes until an admin deliberately picks something
-else.
+`albums.photo_sort_mode` (db/017, redefined by db/018_album_photo_sort_by_
+source.sql) — before this, every album in every gallery used one fixed
+public order (newest-first by EXIF `taken_at`, falling back to upload time
+`created_at`), which looked effectively random whenever capture times were
+missing or tied (routine for guest phone uploads with stripped EXIF, or a
+burst of photos landing in the same second). Now it's a real per-album,
+admin-chosen setting with six modes: `upload_asc` / `upload_desc` (sorted by
+`created_at`, i.e. when the file reached the server — never null, so always
+predictable), `metadata_asc` / `metadata_desc` (sorted by EXIF `taken_at`,
+falling back to `created_at` only when `taken_at` is missing — can still
+look inconsistent if EXIF is patchy, same caveat db/017 originally had),
+and `name_asc` / `name_desc`. Defaults to `upload_asc` (oldest-first by
+upload time) — chosen specifically because it's the one mode that's never
+undermined by missing EXIF, which is exactly what made the pre-db/017 order
+look random in the first place.
 
+- **db/017's first cut silently reverted on save failure** — its PATCH
+  handler in `GalleryManager.tsx` didn't check the fetch response before
+  calling `loadAlbums()`, so a failed save (near-certainly an unapplied
+  migration) reloaded the OLD value and the `<select>` snapped back with
+  zero feedback — looked exactly like "doesn't do anything." Fixed the same
+  way every other silent-failure bug this project has hit was fixed: check
+  `r.ok`, surface the error inline (`sortErr` state, rendered right under
+  the toolbar).
 - **Not the same control as `GalleryManager`'s `assetSort` dropdown** (the
   one below the asset grid, next to Select all/Deselect all) — that's a
   client-only, unsaved preference for browsing the admin's own view of the
-  grid. The new "Public order" `<select>` sits up in the album toolbar next
-  to the Public/Private button, saves immediately on change (same
-  fire-and-`loadAlbums()` convention as that button), and is what public
-  visitors actually see — deliberately a separate, explicit control rather
-  than piggybacking on the admin's browsing convenience, so quickly
+  grid. The "Public order" `<select>` sits up in the album toolbar next to
+  the Public/Private button, saves immediately on change, and is what
+  public visitors actually see — deliberately a separate, explicit control
+  rather than piggybacking on the admin's browsing convenience, so quickly
   re-sorting your own view to find someone's photos never silently changes
   what everyone else sees.
 - **Sorted in JS, not SQL**: `g/[slug]/page.tsx` still issues one query for
-  every visible asset across the whole gallery (unchanged, already ordered
-  `taken_at DESC NULLS LAST, created_at DESC`), then re-sorts each album's
-  slice of `assetsByAlbum` in memory per its own `photo_sort_mode` — a
-  `.reverse()` for `date_asc` (the SQL order is already a complete,
-  correctly-tiebroken total order, so reversing it is exact, not an
-  approximation) and a `localeCompare` on the same displayed first name the
-  "SHOT BY" caption already uses for the two name modes. Avoids a much
-  uglier per-row conditional `ORDER BY` in SQL for four albums' worth of
-  photos that's cheap to sort in JS either way.
+  every visible asset across the whole gallery (now also selecting
+  `a.created_at`, previously only used in `ORDER BY`), then re-sorts each
+  album's slice of `assetsByAlbum` in memory per its own `photo_sort_mode`
+  — a `.reverse()` for `metadata_asc` (the SQL's base fetch order is
+  already a complete, correctly-tiebroken total order by metadata, so
+  reversing it is exact, not an approximation), a real numeric sort by
+  `createdAt` for the two upload-time modes, and `localeCompare` on the
+  same displayed first name the "SHOT BY" caption already uses for the two
+  name modes. Avoids a much uglier per-row conditional `ORDER BY` in SQL
+  for what's cheap to sort in JS either way.
 - **Download filenames are untouched** — the `MSC2026_..._003.jpg`-style
   sequence number still comes from its own independent `row_number() OVER
   (PARTITION BY album_id ORDER BY taken_at, created_at)` in the SQL, always
-  chronological regardless of the album's display sort. Only what viewers
-  *see* changes, not what files are *named*.
+  chronological by capture time regardless of the album's display sort.
+  Only what viewers *see* changes, not what files are *named*.
 - Video showcase albums don't get this control — no photo grid, nothing to
   sort.
+- **The photo grid is a real CSS grid, not multi-column masonry** — it used
+  to be (`columns-2 sm:columns-3 lg:columns-4`, natural-aspect-ratio tiles,
+  `break-inside-avoid`), which reads top-to-bottom **per column** before
+  wrapping to the next column, not left-to-right — so a correctly-sorted
+  array still visually looked wrong/random regardless of what
+  `photo_sort_mode` was set to. Switched to `grid grid-cols-2 sm:grid-cols-3
+  lg:grid-cols-4` with `aspect-square object-cover` tiles (same convention
+  `GalleryManager`'s own admin asset grid already uses), which reads in
+  true reading order at the cost of cropping non-square photos to a square
+  — masonry's "natural aspect ratio, no gaps" look is gone, correct reading
+  order isn't achievable with CSS multi-column any other way (would need a
+  JS masonry library, deliberately not pulled in — see the lean-dependency
+  precedent elsewhere in this doc, e.g. why `CaptionEditor` isn't Tiptap).
 
 ---
 

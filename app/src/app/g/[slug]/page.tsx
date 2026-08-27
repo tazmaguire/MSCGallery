@@ -53,7 +53,7 @@ export default async function P({ params }: { params: { slug: string } }) {
   let rows;
   try {
     rows = await q(
-      `SELECT a.id, a.kind, a.width, a.height, a.taken_at, a.public_key, a.album_id, a.thumb_key, a.preview_key, a.poster_key, a.contributor_id,
+      `SELECT a.id, a.kind, a.width, a.height, a.taken_at, a.created_at, a.public_key, a.album_id, a.thumb_key, a.preview_key, a.poster_key, a.contributor_id,
               COALESCE(c.credit_line, c.display_name) AS contributor_name, c.first_name, c.link_url AS contributor_link,
               row_number() OVER (PARTITION BY a.album_id ORDER BY a.taken_at, a.created_at) AS seq
        FROM assets a JOIN contributors c ON c.id=a.contributor_id JOIN albums al ON al.id=a.album_id
@@ -62,7 +62,7 @@ export default async function P({ params }: { params: { slug: string } }) {
   } catch {
     // db/010_contributor_link.sql not applied yet.
     rows = await q(
-      `SELECT a.id, a.kind, a.width, a.height, a.taken_at, a.public_key, a.album_id, a.thumb_key, a.preview_key, a.poster_key, a.contributor_id,
+      `SELECT a.id, a.kind, a.width, a.height, a.taken_at, a.created_at, a.public_key, a.album_id, a.thumb_key, a.preview_key, a.poster_key, a.contributor_id,
               COALESCE(c.credit_line, c.display_name) AS contributor_name, c.first_name,
               row_number() OVER (PARTITION BY a.album_id ORDER BY a.taken_at, a.created_at) AS seq
        FROM assets a JOIN contributors c ON c.id=a.contributor_id JOIN albums al ON al.id=a.album_id
@@ -76,26 +76,35 @@ export default async function P({ params }: { params: { slug: string } }) {
     const a = { id: r.id, kind: r.kind, width: r.width, height: r.height, contributor_id: r.contributor_id,
       firstName: r.first_name || firstName(r.contributor_name), contributorLink: r.contributor_link || null,
       download_filename: fn, download_url: `/d/${r.id}`,
-      thumb: `/thumbs/thumb/${r.thumb_key}`, preview: `/thumbs/preview/${r.preview_key || r.poster_key}` };
+      thumb: `/thumbs/thumb/${r.thumb_key}`, preview: `/thumbs/preview/${r.preview_key || r.poster_key}`,
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : 0 };
     (assetsByAlbum[r.album_id] ||= []).push(a);
     const c = cc.get(r.contributor_id) ?? { id: r.contributor_id, name: r.first_name || firstName(r.contributor_name), count: 0 }; c.count++; cc.set(r.contributor_id, c);
   }
-  // db/017_album_photo_sort.sql — per-album public order, admin-chosen.
-  // `rows` arrived from SQL already fully ordered (taken_at DESC NULLS
-  // LAST, created_at DESC), so each album's array is already correct for
-  // the 'date_desc' default (the common case — no-op) and a plain reverse()
-  // gives an exact, correctly-tiebroken 'date_asc' for free. Name sorts use
-  // the same displayed first name the "SHOT BY" caption and the admin's own
-  // asset-grid sort already use, for consistency.
+  // db/017 + db/018_album_photo_sort_by_source.sql — per-album public
+  // order, admin-chosen. `rows` arrived from SQL already fully ordered by
+  // metadata (taken_at DESC NULLS LAST, created_at DESC), so 'metadata_desc'
+  // is already correct as fetched (no-op), and a plain reverse() gives an
+  // exact, correctly-tiebroken 'metadata_asc' for free. Upload-time sorts
+  // need a genuine re-sort by createdAt, since the base fetch order isn't
+  // primarily by upload time. Name sorts use the same displayed first name
+  // the "SHOT BY" caption and the admin's own asset-grid sort already use.
   const byFirstName = (a: any) => a.firstName || "";
   for (const al of albums) {
     const list = assetsByAlbum[al.id];
     if (!list) continue;
     switch (al.photo_sort_mode) {
-      case "date_asc": list.reverse(); break;
+      case "upload_asc": list.sort((a, b) => a.createdAt - b.createdAt); break;
+      case "upload_desc": list.sort((a, b) => b.createdAt - a.createdAt); break;
+      case "metadata_asc": list.reverse(); break;
       case "name_asc": list.sort((a, b) => byFirstName(a).localeCompare(byFirstName(b))); break;
       case "name_desc": list.sort((a, b) => byFirstName(b).localeCompare(byFirstName(a))); break;
-      // "date_desc" (or unset, on an unmigrated DB) — already in the right order.
+      // "metadata_desc" (or unset, on an unmigrated DB) — already in the right order.
+      // Legacy db/017-only values, in case db/018 hasn't been applied yet
+      // but db/017 was: treat the old blended "date" concept as upload-time,
+      // since upload time was always the practical tiebreak in that scheme.
+      case "date_asc": list.sort((a, b) => a.createdAt - b.createdAt); break;
+      case "date_desc": list.sort((a, b) => b.createdAt - a.createdAt); break;
     }
   }
   const albumsOut = withPhotos.map((al: any) => ({

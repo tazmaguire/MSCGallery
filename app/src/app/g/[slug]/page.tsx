@@ -21,7 +21,7 @@ export default async function P({ params }: { params: { slug: string } }) {
   let albums;
   try {
     albums = await q(
-      `SELECT al.id, al.name, al.slug, al.is_showcase, al.showcase,
+      `SELECT al.id, al.name, al.slug, al.is_showcase, al.showcase, al.photo_sort_mode,
               (SELECT count(*) FROM assets a WHERE a.album_id=al.id AND a.visibility='visible' AND a.status='ready' AND (a.deletion_status IS NULL OR a.deletion_status='')) AS count
        FROM albums al WHERE al.gallery_id=$1 AND al.is_private=false AND al.is_unlisted=false ORDER BY al.sort_order`, [g.id]);
   } catch {
@@ -79,6 +79,24 @@ export default async function P({ params }: { params: { slug: string } }) {
       thumb: `/thumbs/thumb/${r.thumb_key}`, preview: `/thumbs/preview/${r.preview_key || r.poster_key}` };
     (assetsByAlbum[r.album_id] ||= []).push(a);
     const c = cc.get(r.contributor_id) ?? { id: r.contributor_id, name: r.first_name || firstName(r.contributor_name), count: 0 }; c.count++; cc.set(r.contributor_id, c);
+  }
+  // db/017_album_photo_sort.sql — per-album public order, admin-chosen.
+  // `rows` arrived from SQL already fully ordered (taken_at DESC NULLS
+  // LAST, created_at DESC), so each album's array is already correct for
+  // the 'date_desc' default (the common case — no-op) and a plain reverse()
+  // gives an exact, correctly-tiebroken 'date_asc' for free. Name sorts use
+  // the same displayed first name the "SHOT BY" caption and the admin's own
+  // asset-grid sort already use, for consistency.
+  const byFirstName = (a: any) => a.firstName || "";
+  for (const al of albums) {
+    const list = assetsByAlbum[al.id];
+    if (!list) continue;
+    switch (al.photo_sort_mode) {
+      case "date_asc": list.reverse(); break;
+      case "name_asc": list.sort((a, b) => byFirstName(a).localeCompare(byFirstName(b))); break;
+      case "name_desc": list.sort((a, b) => byFirstName(b).localeCompare(byFirstName(a))); break;
+      // "date_desc" (or unset, on an unmigrated DB) — already in the right order.
+    }
   }
   const albumsOut = withPhotos.map((al: any) => ({
     id: al.id, name: al.name, slug: al.slug, count: Number(al.count),

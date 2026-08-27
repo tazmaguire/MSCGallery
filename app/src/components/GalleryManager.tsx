@@ -229,6 +229,20 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
             ) : !album.is_guest_album && (
               <button onClick={() => fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: album.id, is_private: !album.is_private }) }).then(loadAlbums)} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm">{album.is_private ? <><Lock size={15} />Private</> : <><Eye size={15} />Public</>}</button>
             )}
+            {/* db/017_album_photo_sort.sql — the order PUBLIC VISITORS see this
+                album's photos in, not just this admin's local view (that's
+                the separate assetSort dropdown further down, below the
+                asset grid). Saves immediately on change, same convention as
+                the Public/Private button right next to it. */}
+            <select value={album.photo_sort_mode || "date_desc"}
+              onChange={e => fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: album.id, photo_sort_mode: e.target.value }) }).then(loadAlbums)}
+              title="The order visitors see this album's photos in on the public site"
+              className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none">
+              <option value="date_desc">Public order: Date (newest first)</option>
+              <option value="date_asc">Public order: Date (oldest first)</option>
+              <option value="name_asc">Public order: Name (A–Z)</option>
+              <option value="name_desc">Public order: Name (Z–A)</option>
+            </select>
           </div>
           {!album.is_guest_album && <p className="data text-[var(--text-3)]">Applies to whatever you add next — change it any time before clicking Add photos again.</p>}
         </div>

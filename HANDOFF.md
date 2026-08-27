@@ -200,7 +200,12 @@ app/                     Next.js 14 (App Router, TypeScript)
                          bulk-tools panel for ShowcaseAlbumPanel — rename,
                          its own Hidden/Unlisted/Public pill, thumbnail
                          upload, video URL, autoplay, and a CaptionEditor —
-                         see "Video showcase albums" below), CaptionEditor
+                         see "Video showcase albums" below; a photo album's
+                         toolbar also has a "Public order" select
+                         (db/017_album_photo_sort.sql, saves immediately —
+                         separate from the client-only assetSort dropdown
+                         below the grid, see "Per-album photo order"
+                         below), CaptionEditor
                          (small contentEditable + execCommand Bold/Italic/
                          Link toolbar — deliberately not a full editor
                          library for a 3-command requirement), ThemeToggle, AdminNav (shows
@@ -309,6 +314,11 @@ db/016_video_showcase_album.sql albums.is_showcase / is_unlisted / showcase
                          above) holding one curated YouTube/Vimeo embed, an
                          admin-uploaded thumbnail, and a rich-text caption.
                          See "Video showcase albums" below.
+db/017_album_photo_sort.sql albums.photo_sort_mode ('date_asc'|'date_desc'|
+                         'name_asc'|'name_desc', default 'date_desc') — the
+                         order PUBLIC VISITORS see a photo album's photos in,
+                         admin-chosen per album. See "Per-album photo order"
+                         below.
                          (all NOT auto-applied to an existing DB, see
                          "Database migrations" below)
 deploy/
@@ -531,7 +541,9 @@ rather than going straight to YouTube/Vimeo.
   rows (embed-only), so the existing "hide albums with no visible photos"
   filter in `g/[slug]/page.tsx` explicitly exempts `is_showcase` albums —
   otherwise they'd never appear at all. Their tile uses `showcase.thumbKey`
-  as the cover and links to `/g/[slug]/v/[slug]` via a real `<Link>`, not
+  as the cover and links to `/g/[slug]/v/[slug]` via a plain `<a>` (**not**
+  `next/link` — see the Guardrails entry on this; a client-side transition
+  here breaks the CSP allowance below on the first click), not
   `Gallery.tsx`'s usual `setOpenAlbum` client-state toggle.
 - **First HTML-rendering surface in this app** — `captionHtml` is the only
   admin-supplied field ever rendered via `dangerouslySetInnerHTML` anywhere
@@ -560,6 +572,48 @@ rather than going straight to YouTube/Vimeo.
   own Hidden/Unlisted/Public pill, thumbnail upload, video URL, autoplay,
   `CaptionEditor` — **deliberately no download link and no bulk-select
   tools**, since there's no per-photo asset grid to operate on at all.
+
+---
+
+## Per-album photo order
+
+`albums.photo_sort_mode` (db/017_album_photo_sort.sql) — before this, every
+album in every gallery used one fixed public order (newest-first by EXIF
+`taken_at`, falling back to upload time `created_at`), which looked
+effectively random whenever capture times were missing or tied (routine for
+guest phone uploads with stripped EXIF, or a burst of photos landing in the
+same second). Now it's a real per-album, admin-chosen setting: `date_asc` /
+`date_desc` / `name_asc` / `name_desc`, defaulting to `date_desc` so no
+existing album's order changes until an admin deliberately picks something
+else.
+
+- **Not the same control as `GalleryManager`'s `assetSort` dropdown** (the
+  one below the asset grid, next to Select all/Deselect all) — that's a
+  client-only, unsaved preference for browsing the admin's own view of the
+  grid. The new "Public order" `<select>` sits up in the album toolbar next
+  to the Public/Private button, saves immediately on change (same
+  fire-and-`loadAlbums()` convention as that button), and is what public
+  visitors actually see — deliberately a separate, explicit control rather
+  than piggybacking on the admin's browsing convenience, so quickly
+  re-sorting your own view to find someone's photos never silently changes
+  what everyone else sees.
+- **Sorted in JS, not SQL**: `g/[slug]/page.tsx` still issues one query for
+  every visible asset across the whole gallery (unchanged, already ordered
+  `taken_at DESC NULLS LAST, created_at DESC`), then re-sorts each album's
+  slice of `assetsByAlbum` in memory per its own `photo_sort_mode` — a
+  `.reverse()` for `date_asc` (the SQL order is already a complete,
+  correctly-tiebroken total order, so reversing it is exact, not an
+  approximation) and a `localeCompare` on the same displayed first name the
+  "SHOT BY" caption already uses for the two name modes. Avoids a much
+  uglier per-row conditional `ORDER BY` in SQL for four albums' worth of
+  photos that's cheap to sort in JS either way.
+- **Download filenames are untouched** — the `MSC2026_..._003.jpg`-style
+  sequence number still comes from its own independent `row_number() OVER
+  (PARTITION BY album_id ORDER BY taken_at, created_at)` in the SQL, always
+  chronological regardless of the album's display sort. Only what viewers
+  *see* changes, not what files are *named*.
+- Video showcase albums don't get this control — no photo grid, nothing to
+  sort.
 
 ---
 

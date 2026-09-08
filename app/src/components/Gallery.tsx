@@ -282,12 +282,17 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
               <figure key={a.id} className={`group relative overflow-hidden rounded-[var(--radius)] bg-[var(--surface)] ${cart.has(a.id) ? "ring-2 ring-[var(--brand)]" : ""}`}>
                 <img src={a.thumb} alt="" loading="lazy" onError={onThumbError} onClick={() => setLb({ album: album.id, i: assets.indexOf(a) })} onContextMenu={blockSave} draggable={false} className="aspect-square w-full select-none object-cover cursor-zoom-in transition duration-300 group-hover:opacity-95 [-webkit-touch-callout:none]" />
                 {a.kind === "video" && <div className="pointer-events-none absolute inset-0 grid place-items-center"><div className="rounded-full bg-black/50 p-3 backdrop-blur"><Play size={18} fill="white" /></div></div>}
+                {/* Visible by default below sm: — :hover never fires on touch, so
+                    without this a phone/tablet visitor has no way to cart,
+                    download, or see credit for a photo from the grid at all
+                    (only path would be opening the lightbox first). Desktop
+                    keeps the existing hover-reveal. */}
                 <button onClick={(e) => { e.stopPropagation(); toggleCart(a.id); }} title={cart.has(a.id) ? "Remove from cart" : "Add to cart"}
-                  className={`absolute left-2 top-2 grid h-8 w-8 place-items-center rounded-full backdrop-blur transition focus:opacity-100 ${cart.has(a.id) ? "bg-[var(--brand)] text-white opacity-100" : "bg-black/40 text-white/90 opacity-0 group-hover:opacity-100"}`}>
+                  className={`absolute left-2 top-2 grid h-8 w-8 place-items-center rounded-full backdrop-blur transition focus:opacity-100 ${cart.has(a.id) ? "bg-[var(--brand)] text-white opacity-100" : "bg-black/40 text-white/90 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}>
                   {cart.has(a.id) ? <Check size={15} /> : <ShoppingCart size={15} />}
                 </button>
-                <button onClick={(e) => { e.stopPropagation(); requestDownload(() => dl(a.download_url, a.download_filename)); }} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/40 text-white/90 opacity-0 backdrop-blur transition group-hover:opacity-100 focus:opacity-100" title="Download"><Download size={15} /></button>
-                <figcaption className="absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-black/40 py-1 pl-2.5 pr-1.5 text-white/90 opacity-0 backdrop-blur transition group-hover:opacity-100">
+                <button onClick={(e) => { e.stopPropagation(); requestDownload(() => dl(a.download_url, a.download_filename)); }} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/40 text-white/90 opacity-100 backdrop-blur transition sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100" title="Download"><Download size={15} /></button>
+                <figcaption className="absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-black/40 py-1 pl-2.5 pr-1.5 text-white/90 opacity-100 backdrop-blur transition sm:opacity-0 sm:group-hover:opacity-100">
                   <button onClick={(e) => { e.stopPropagation(); setFilterContributor({ id: a.contributor_id, name: a.firstName }); }} className="data text-[11px] hover:underline" title={`See all photos by ${a.firstName}`}>SHOT BY {a.firstName}</button>
                   {a.contributorLink && <a href={a.contributorLink} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()} title={`${a.firstName}'s link`} className="text-white/70 hover:text-white"><ExternalLink size={11} /></a>}
                 </figcaption>
@@ -373,10 +378,14 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
             </div>
             {cart.size > 0 && (
               <div className="space-y-2 border-t border-[var(--border)] p-4">
+                {/* Navigate first (the URL string is already fully resolved
+                    from the current cart), then clear — clearing before the
+                    browser reads it would strip every id= param since
+                    cartDownloadUrl is derived reactively from cart state. */}
                 {!dlIdentity?.name || (downloadMode === "pin" && !dlUnlocked) ? (
-                  <button onClick={() => requestDownload(() => { window.location.href = cartDownloadUrl; })} className="btn-primary flex w-full items-center justify-center gap-2 py-3"><Download size={16} /> Download all ({cart.size})</button>
+                  <button onClick={() => requestDownload(() => { window.location.href = cartDownloadUrl; clearCart(); })} className="btn-primary flex w-full items-center justify-center gap-2 py-3"><Download size={16} /> Download all ({cart.size})</button>
                 ) : (
-                  <a href={cartDownloadUrl} className="btn-primary flex w-full items-center justify-center gap-2 py-3"><Download size={16} /> Download all ({cart.size})</a>
+                  <a href={cartDownloadUrl} onClick={(e) => { e.preventDefault(); window.location.href = cartDownloadUrl; clearCart(); }} className="btn-primary flex w-full items-center justify-center gap-2 py-3"><Download size={16} /> Download all ({cart.size})</a>
                 )}
                 <button onClick={clearCart} className="btn-ghost flex w-full items-center justify-center gap-2 py-2.5 text-sm"><Trash2 size={14} /> Clear cart</button>
               </div>

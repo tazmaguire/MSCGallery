@@ -1,7 +1,7 @@
 "use client";
 /** Admin gallery manager: albums, add pro photos, three link modes + QR, move, edit, delete, branding. */
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { QrCode, Eye, Upload, Lock, FolderPlus, Move, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star, Tag, Search, CheckSquare, Square, Settings as SettingsIcon, Infinity, Video } from "lucide-react";
+import { QrCode, Eye, Upload, Lock, FolderPlus, Loader2, X, Download, Link2, Copy, Check, Camera, Users, KeyRound, Trash2, Palette, Type, Pencil, Star, Tag, Search, CheckSquare, Square, Settings as SettingsIcon, Infinity, Video, AlertTriangle } from "lucide-react";
 import { DISPLAY_FONTS, BODY_FONTS, MONO_FONTS } from "@/lib/fonts";
 import { formatBytes, flatMonthlyCost, formatUSD } from "@/lib/storageCost";
 import { parseVideoUrl } from "@/lib/videoEmbed";
@@ -38,6 +38,7 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
   const [bibSearch, setBibSearch] = useState("");
   const [bibResults, setBibResults] = useState<any[] | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const videoFileRef = useRef<HTMLInputElement>(null);
   const style = { ["--brand" as any]: gallery.brand?.primary || "#E8442A" } as React.CSSProperties;
 
   const loadAlbums = useCallback(() => fetch(`/api/admin/albums?gallery=${gallery.id}`).then(r => r.json()).then(d => { setAlbums(d.albums); if (!active && d.albums[0]) setActive(d.albums[0].id); }), [gallery.id, active]);
@@ -222,20 +223,34 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
       <>
       {album && (
         <div className="mb-4 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Stacks to a clean vertical list below sm: — as a single flex-wrap
+              row this is 6-9 controls (photo/video inputs, two text fields,
+              rename, download, public/private, sort) wrapping unpredictably
+              on a phone-width screen. */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             {!album.is_guest_album && <>
-              <button onClick={() => fileRef.current?.click()} disabled={uploading} className="btn-primary flex items-center gap-2 px-3 py-2 text-sm disabled:opacity-50">{uploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}Add photos</button>
-              <input ref={fileRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={e => e.target.files && uploadPro(e.target.files)} />
-              <input value={proCreditName} onChange={e => setProCreditName(e.target.value)} placeholder="Attributed to (default: Official)" className="w-52 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)]" />
-              <input value={proCreditLink} onChange={e => setProCreditLink(e.target.value)} placeholder="Their link (optional)" className="w-52 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)]" />
+              {/* Split by accept type, not just one combined image/video input —
+                  iOS Safari silently degrades a mixed accept="image/*,video/*"
+                  + multiple input to single-select in the native Photos
+                  picker. Same fix as Uploader.tsx (the guest uploader). */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={() => fileRef.current?.click()} disabled={uploading} className="btn-primary flex items-center gap-2 px-3 py-2 text-sm disabled:opacity-50">{uploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}Add photos</button>
+                <input ref={fileRef} type="file" multiple accept="image/*" className="hidden" onChange={e => e.target.files && uploadPro(e.target.files)} />
+                <button onClick={() => videoFileRef.current?.click()} disabled={uploading} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm disabled:opacity-50"><Video size={15} />Add video</button>
+                <input ref={videoFileRef} type="file" multiple accept="video/*" className="hidden" onChange={e => e.target.files && uploadPro(e.target.files)} />
+              </div>
+              <input value={proCreditName} onChange={e => setProCreditName(e.target.value)} placeholder="Attributed to (default: Official)" className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)] sm:w-52" />
+              <input value={proCreditLink} onChange={e => setProCreditLink(e.target.value)} placeholder="Their link (optional)" className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none focus:border-[var(--text-2)] sm:w-52" />
             </>}
-            <button onClick={() => setPanel("renameAlbum")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Pencil size={15} />Rename album</button>
-            <a href={`/g/${gallery.slug}/download?album=${album.slug}`} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Download size={15} />Download album</a>
-            {album.is_video_album ? (
-              <span className="data flex items-center gap-1.5 text-[var(--text-3)]" title="Videos are never shown on the public site"><Lock size={13} />Always private</span>
-            ) : !album.is_guest_album && (
-              <button onClick={() => fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: album.id, is_private: !album.is_private }) }).then(loadAlbums)} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm">{album.is_private ? <><Lock size={15} />Private</> : <><Eye size={15} />Public</>}</button>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <button onClick={() => setPanel("renameAlbum")} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Pencil size={15} />Rename album</button>
+              <a href={`/g/${gallery.slug}/download?album=${album.slug}`} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm"><Download size={15} />Download album</a>
+              {album.is_video_album ? (
+                <span className="data flex items-center gap-1.5 text-[var(--text-3)]" title="Videos are never shown on the public site"><Lock size={13} />Always private</span>
+              ) : !album.is_guest_album && (
+                <button onClick={() => fetch("/api/admin/albums", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: album.id, is_private: !album.is_private }) }).then(loadAlbums)} className="btn-ghost flex items-center gap-2 px-3 py-2 text-sm">{album.is_private ? <><Lock size={15} />Private</> : <><Eye size={15} />Public</>}</button>
+              )}
+            </div>
             {/* db/017 + db/018_album_photo_sort_by_source.sql — the order
                 PUBLIC VISITORS see this album's photos in, not just this
                 admin's local view (that's the separate assetSort dropdown
@@ -248,7 +263,7 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
             <select value={album.photo_sort_mode || "upload_asc"}
               onChange={e => setPhotoSortMode(album.id, e.target.value)}
               title="The order visitors see this album's photos in on the public site"
-              className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none">
+              className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm outline-none sm:w-auto">
               <option value="upload_asc">Public order: Upload time (oldest first)</option>
               <option value="upload_desc">Public order: Upload time (newest first)</option>
               <option value="metadata_asc">Public order: Date taken (oldest first)</option>
@@ -276,7 +291,7 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
       )}
 
       {showProQueue && (
-        <div className="fixed bottom-4 left-4 z-40 w-80 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
+        <div className="fixed inset-x-4 bottom-4 z-40 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] shadow-2xl sm:inset-x-auto sm:left-4 sm:w-80">
           <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
             <span className="data text-[var(--text-2)]">
               Uploading {proQueue.filter(x => x.status === "done").length}/{proQueue.length}
@@ -319,23 +334,29 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
             <span className="text-sm"><strong>{sel.size}</strong> selected</span>
             <div className="flex flex-wrap items-center gap-2">
               {sel.size === 1 && assets.find(a => a.id === [...sel][0])?.kind !== "video" && <>
-                <button onClick={() => setCover([...sel][0], "album")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs" title="Use as this album's cover"><Star size={12} />Album cover</button>
-                <button onClick={() => setCover([...sel][0], "gallery")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs" title="Use as this gallery's cover"><Star size={12} />Gallery cover</button>
+                <button onClick={() => setCover([...sel][0], "album")} className="btn-ghost flex items-center gap-1.5 px-3 py-2 text-xs" title="Use as this album's cover"><Star size={16} />Album cover</button>
+                <button onClick={() => setCover([...sel][0], "gallery")} className="btn-ghost flex items-center gap-1.5 px-3 py-2 text-xs" title="Use as this gallery's cover"><Star size={16} />Gallery cover</button>
               </>}
-              <button onClick={() => setPanel("editCredit")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Pencil size={12} />Edit credit</button>
-              {sel.size === 1 && <button onClick={() => setPanel("tags")} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Tag size={12} />Tags</button>}
+              <button onClick={() => setPanel("editCredit")} className="btn-ghost flex items-center gap-1.5 px-3 py-2 text-xs"><Pencil size={16} />Edit credit</button>
+              {sel.size === 1 && <button onClick={() => setPanel("tags")} className="btn-ghost flex items-center gap-1.5 px-3 py-2 text-xs"><Tag size={16} />Tags</button>}
               {sel.size <= 300
-                ? <a href={`/g/${gallery.slug}/download?${[...sel].map(id => `id=${id}`).join("&")}`} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Download size={12} />Download selected</a>
+                ? <a href={`/g/${gallery.slug}/download?${[...sel].map(id => `id=${id}`).join("&")}`} className="btn-ghost flex items-center gap-1.5 px-3 py-2 text-xs"><Download size={16} />Download selected</a>
                 : <span className="data text-[var(--text-2)]">Select 300 or fewer to download together</span>}
               {album?.is_video_album ? (
                 <span className="data text-[var(--text-2)]">Videos never leave this album — download, then delete once backed up</span>
               ) : [...sel].some(id => assets.find(a => a.id === id)?.kind === "video") ? (
                 <span className="data text-[var(--text-2)]">Videos can't be moved — they stay hidden</span>
-              ) : <>
-                <span className="data text-[var(--text-2)]">Move to</span>
-                {albums.filter(al => al.id !== active && !al.is_video_album).map(al => <button key={al.id} onClick={() => move(al.id)} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs"><Move size={12} />{al.name}</button>)}
-              </>}
-              {isOwner && <button onClick={remove} className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 text-xs text-[var(--brand)]"><Trash2 size={12} />Delete</button>}
+              ) : (
+                // One <select> instead of a button per album — the old
+                // per-album-button layout was the worst offender for
+                // becoming a wall of tiny unreadable buttons on a phone.
+                <select value="" onChange={e => e.target.value && move(e.target.value)}
+                  className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-xs outline-none">
+                  <option value="">Move to…</option>
+                  {albums.filter(al => al.id !== active && !al.is_video_album).map(al => <option key={al.id} value={al.id}>{al.name}</option>)}
+                </select>
+              )}
+              {isOwner && <button onClick={remove} className="btn-ghost flex items-center gap-1.5 px-3 py-2 text-xs text-[var(--brand)]"><Trash2 size={16} />Delete</button>}
             </div>
           </div>
         </div>
@@ -344,7 +365,7 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
       )}
       </>}
 
-      {panel === "settings" && <SettingsModal gallery={gallery} albums={albums} links={links} reloadLinks={loadLinks}
+      {panel === "settings" && <SettingsModal gallery={gallery} albums={albums} links={links} reloadLinks={loadLinks} isOwner={isOwner}
         initialTab={settingsTab} onClose={() => setPanel(null)} onShowQr={(t) => { setQrToken(t); setPanel("qr"); }} />}
       {panel === "qr" && <QRModal gallery={gallery} token={qrToken} onClose={() => setPanel("settings")} />}
       {panel === "newAlbum" && <NewAlbumModal galleryId={gallery.id} onClose={() => setPanel(null)} onDone={() => { setPanel(null); loadAlbums(); }} />}
@@ -367,21 +388,25 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
 // file (e.g. the download-protection toggle inside AccessSettings). Each
 // tab's content is the same component/logic as before, just no longer
 // wrapped in its own <Modal> — this one supplies the single shared chrome.
-function SettingsModal({ gallery, albums, links, reloadLinks, initialTab, onClose, onShowQr }: any) {
-  const [tab, setTab] = useState<"access" | "branding" | "links" | "downloads">(initialTab || "access");
-  const TABS: { key: "access" | "branding" | "links" | "downloads"; label: string; icon: any }[] = [
+function SettingsModal({ gallery, albums, links, reloadLinks, isOwner, initialTab, onClose, onShowQr }: any) {
+  const [tab, setTab] = useState<"access" | "branding" | "links" | "downloads" | "uploads">(initialTab || "access");
+  const TABS: { key: "access" | "branding" | "links" | "downloads" | "uploads"; label: string; icon: any }[] = [
     { key: "access", label: "Access", icon: Lock },
     { key: "branding", label: "Branding", icon: Palette },
     { key: "links", label: "Upload links", icon: Link2 },
     { key: "downloads", label: "Downloads", icon: Download },
+    { key: "uploads", label: "Upload issues", icon: AlertTriangle },
   ];
   return (
     <Modal title="Settings" onClose={onClose} wide>
-      <div className="mb-4 flex w-fit gap-1 rounded-full border border-[var(--border)] p-0.5">
+      {/* Icon-only below sm: with an overflow-x-auto safety net — 5 labeled
+          tabs (Access/Branding/Upload links/Downloads/Upload issues) is too
+          wide for a narrow modal, especially the full-screen mobile sheet. */}
+      <div className="mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-full border border-[var(--border)] p-0.5">
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
-            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${tab === t.key ? "bg-[var(--brand)]/20 text-[var(--brand)]" : "text-[var(--text-3)] hover:text-[var(--text)]"}`}>
-            <t.icon size={13} />{t.label}
+            className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${tab === t.key ? "bg-[var(--brand)]/20 text-[var(--brand)]" : "text-[var(--text-3)] hover:text-[var(--text)]"}`}>
+            <t.icon size={13} /><span className="hidden sm:inline">{t.label}</span>
           </button>
         ))}
       </div>
@@ -389,7 +414,37 @@ function SettingsModal({ gallery, albums, links, reloadLinks, initialTab, onClos
       {tab === "branding" && <BrandSettings gallery={gallery} />}
       {tab === "links" && <LinksSettings gallery={gallery} albums={albums} links={links} reload={reloadLinks} showQr={onShowQr} />}
       {tab === "downloads" && <DownloadLogsTab galleryId={gallery.id} />}
+      {tab === "uploads" && <UploadIssuesTab galleryId={gallery.id} isOwner={isOwner} />}
     </Modal>
+  );
+}
+function UploadIssuesTab({ galleryId, isOwner }: any) {
+  const [issues, setIssues] = useState<any[] | null>(null);
+  const load = useCallback(() => fetch(`/api/admin/galleries/${galleryId}/upload-issues`).then(r => r.json()).then(d => setIssues(d.issues || [])), [galleryId]);
+  useEffect(() => { load(); }, [load]);
+  const dismiss = (id: string) => {
+    setIssues(is => is && is.filter(i => i.id !== id)); // optimistic — these are dead rows either way
+    fetch("/api/admin/assets", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds: [id] }) });
+  };
+  if (issues === null) return <Loader2 size={18} className="mx-auto my-4 animate-spin text-[var(--text-3)]" />;
+  if (!issues.length) return <p className="data py-8 text-center text-[var(--text-3)]">No upload problems — everything that's come in has processed cleanly.</p>;
+  return (
+    <div className="max-h-96 space-y-1.5 overflow-y-auto">
+      <p className="data mb-2 text-[var(--text-3)]">Photos/videos that never finished uploading, or were rejected as invalid files. A guest whose upload is stuck here typically never saw an error at the time — worth a follow-up with them.</p>
+      {issues.map(i => (
+        <div key={i.id} className="flex items-center gap-3 rounded-[var(--radius)] bg-[var(--bg-2)] px-3 py-2 text-sm">
+          <AlertTriangle size={15} className="shrink-0 text-[var(--brand)]" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate">{i.original_filename || "(untitled)"}{i.album_name && <span className="text-[var(--text-3)]"> · {i.album_name}</span>}</div>
+            <div className="data text-[var(--text-3)]">
+              {i.first_name || i.contributor_name || "Unknown"} · {i.status === "awaiting_upload" ? "never arrived" : "failed"} · {new Date(i.created_at).toLocaleString()}
+              {i.error && ` · ${i.error}`}
+            </div>
+          </div>
+          {isOwner && <button onClick={() => dismiss(i.id)} className="btn-ghost shrink-0 px-2 py-1.5 text-xs">Dismiss</button>}
+        </div>
+      ))}
+    </div>
   );
 }
 function DownloadLogsTab({ galleryId }: any) {
@@ -829,9 +884,16 @@ function BrandSettings({ gallery }: any) {
   );
 }
 function Modal({ title, children, onClose, wide }: any) {
+  // grid place-items-center + overflow-y-auto clips the top of anything
+  // taller than the viewport (a known CSS quirk: the browser only lets you
+  // scroll to the centered item's excess on one side) — hit SettingsModal
+  // as soon as a tab had more than a couple of rows. flex items-start with
+  // manual vertical padding scrolls correctly instead. Full-screen below
+  // sm: rather than a small centered card, since a phone has no room to
+  // spare around a "centered" dialog anyway.
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/80 p-4" onClick={onClose}>
-      <div className={`w-full ${wide ? "max-w-lg" : "max-w-sm"} rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-5`} onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-4 py-8 sm:items-center" onClick={onClose}>
+      <div className={`h-full w-full sm:h-auto ${wide ? "sm:max-w-lg" : "sm:max-w-sm"} rounded-none border border-[var(--border)] bg-[var(--surface)] p-5 sm:rounded-[var(--radius)]`} onClick={e => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between"><h2 className="display text-xl">{title}</h2><button onClick={onClose} className="text-[var(--text-2)] hover:text-[var(--text)]"><X size={18} /></button></div>
         {children}
       </div>

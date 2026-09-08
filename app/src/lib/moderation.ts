@@ -31,6 +31,34 @@ export async function pendingGalleries() {
   );
 }
 
+// Upload reliability: assets stuck at status='awaiting_upload' (bytes never
+// arrived — the classic case is a guest's tab getting backgrounded/closed
+// mid-transfer, so neither onload nor onerror ever fires) or 'failed' (the
+// worker rejected an impostor file, or the stale-upload sweep in
+// worker/src/index.js gave up after 2h) are invisible everywhere else —
+// PENDING_WHERE above requires status='ready', so a stuck row is a true
+// ghost with no admin visibility at all until this.
+const UPLOAD_ISSUE_WHERE = `a.status IN ('awaiting_upload','failed') AND (a.deletion_status IS NULL OR a.deletion_status = '')`;
+
+export async function uploadIssuesCount(galleryId: string): Promise<number> {
+  const [row] = await q<{ n: number }>(`SELECT count(*)::int AS n FROM assets a WHERE ${UPLOAD_ISSUE_WHERE} AND a.gallery_id=$1`, [galleryId]);
+  return row?.n ?? 0;
+}
+
+export async function uploadIssues(galleryId: string) {
+  return q(
+    `SELECT a.id, a.kind, a.status, a.error, a.original_filename, a.created_at,
+            c.first_name, c.display_name AS contributor_name,
+            al.name AS album_name
+     FROM assets a
+     LEFT JOIN contributors c ON c.id = a.contributor_id
+     LEFT JOIN albums al ON al.id = a.album_id
+     WHERE ${UPLOAD_ISSUE_WHERE} AND a.gallery_id=$1
+     ORDER BY a.created_at DESC`,
+    [galleryId]
+  );
+}
+
 export async function pendingQueue(galleryId?: string) {
   return q(
     `SELECT a.id, a.kind, a.width, a.height, a.bytes, a.thumb_key, a.preview_key, a.poster_key,

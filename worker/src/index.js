@@ -283,7 +283,30 @@ async function runOne() {
   return true;
 }
 
+// Guests occasionally leave an upload half-finished — the tab gets
+// backgrounded/closed mid-transfer, or the network drops before
+// /api/upload/complete ever runs. The asset row is left at
+// status='awaiting_upload' (or 'uploaded', if complete succeeded but no
+// derive job ever got queued) with nothing to revisit it: moderation.ts's
+// PENDING_WHERE requires status='ready', so a stuck row is invisible in
+// every admin view today. Sweep periodically on this same open pool — the
+// worker is already a long-running process, so no new invocation mechanism
+// is needed. Threshold is generous (2h) since a slow phone connection on a
+// big video is a real, non-broken case.
+const STALE_UPLOAD_SWEEP_MS = 30 * 60_000;
+async function sweepStaleUploads() {
+  try {
+    const { rows } = await db.query(
+      `UPDATE assets SET status='failed', error='Upload never completed (no response from the browser after 2 hours)'
+       WHERE status IN ('awaiting_upload','uploaded') AND created_at < now() - interval '2 hours'
+       RETURNING id`);
+    if (rows.length) log(`swept ${rows.length} stale upload(s): ${rows.map(r => r.id).join(", ")}`);
+  } catch (e) { log("sweepStaleUploads:", e.message); }
+}
+
 async function loop() { for (;;) { try { if (!(await runOne())) await new Promise(r => setTimeout(r, cfg.pollMs)); } catch (e) { log("loop:", e.message); await new Promise(r => setTimeout(r, cfg.pollMs)); } } }
 log(`worker ${cfg.id} up, concurrency ${cfg.concurrency}`);
+sweepStaleUploads();
+setInterval(sweepStaleUploads, STALE_UPLOAD_SWEEP_MS);
 for (let i = 0; i < cfg.concurrency; i++) loop();
 process.on("SIGTERM", async () => { await exiftool.end(); await db.end(); process.exit(0); });

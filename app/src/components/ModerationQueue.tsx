@@ -84,12 +84,14 @@ export default function ModerationQueue({ initial, galleries, activeGallery }: {
         {queue.map((a) => { const on = sel.has(a.id); return (
           <div key={a.id} className={`group relative overflow-hidden rounded-[var(--radius)] border bg-[var(--surface)] ${on ? "border-[var(--brand)] ring-2 ring-[var(--brand)]" : "border-[var(--border)]"}`}>
             <img src={a.preview || a.thumb} alt="" loading="lazy" onClick={() => toggle(a.id)} className="aspect-[4/3] w-full cursor-pointer bg-[var(--bg-2)] object-cover" />
+            {/* h-9 w-9 (36px) below sm: — h-7 (28px) is well under the 44px
+                touch-target guideline; desktop keeps the tighter size. */}
             <button onClick={() => toggle(a.id)} title={on ? "Deselect" : "Select"}
-              className={`absolute left-2 top-2 grid h-7 w-7 place-items-center rounded-full backdrop-blur transition ${on ? "bg-[var(--brand)] text-white" : "bg-black/40 text-white/90"}`}>
+              className={`absolute left-2 top-2 grid h-9 w-9 place-items-center rounded-full backdrop-blur transition sm:h-7 sm:w-7 ${on ? "bg-[var(--brand)] text-white" : "bg-black/40 text-white/90"}`}>
               {on && <Check size={14} />}
             </button>
             <button onClick={() => rejectOne(a.id)} disabled={busy} title="Reject"
-              className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/40 text-white/90 backdrop-blur transition hover:bg-[var(--brand)] disabled:opacity-50">
+              className="absolute right-2 top-2 grid h-9 w-9 place-items-center rounded-full bg-black/40 text-white/90 backdrop-blur transition hover:bg-[var(--brand)] disabled:opacity-50 sm:h-7 sm:w-7">
               <X size={14} />
             </button>
             <div className="data absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-4 text-white/90">

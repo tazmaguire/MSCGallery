@@ -19,7 +19,11 @@ export default function SiteHeader({ siteName, logoUrl, displayMode = "both", cr
             {crumbs.map((c, i) => (
               <span key={i} className="flex min-w-0 items-center gap-1.5">
                 <ChevronRight size={12} className="shrink-0 opacity-50" />
-                {c.href ? <Link href={c.href} className="truncate transition hover:text-[var(--text)]">{c.label}</Link> : <span className="truncate text-[var(--text-2)]">{c.label}</span>}
+                {/* truncate does nothing without a bounded width — inside this
+                    flex row it just grows to fit, so the whole bar relies on
+                    overflow-x-auto with no visual hint there's more offscreen.
+                    An explicit max-width makes long names actually shrink. */}
+                {c.href ? <Link href={c.href} className="max-w-[7rem] truncate transition hover:text-[var(--text)] sm:max-w-[12rem]">{c.label}</Link> : <span className="max-w-[7rem] truncate text-[var(--text-2)] sm:max-w-[12rem]">{c.label}</span>}
               </span>
             ))}
           </nav>

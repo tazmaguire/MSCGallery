@@ -7,10 +7,20 @@
  * config. PIN links show a gate first.
  */
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Upload, Check, AlertCircle, Loader2, Lock, ShieldCheck, X, Info, Images, RotateCcw, Camera } from "lucide-react";
+import { Upload, Check, AlertCircle, Loader2, Lock, ShieldCheck, X, Info, Images, RotateCcw, Camera, Video } from "lucide-react";
 
 type Job = { id: string; file: File; progress: number; status: "staged" | "queued" | "uploading" | "done" | "error"; error?: string };
 const PARALLEL = 4;
+// A tab backgrounded/suspended by iOS Safari mid-upload freezes ALL JS on the
+// page — including any in-page stall timer — so this alone can't catch that
+// case; it's the visibilitychange handler below that does. This constant is
+// for the separate, more common case: the tab stays foregrounded but the
+// connection genuinely stalls (dead wifi, a hung server) with zero progress.
+const STALL_MS = 45_000;
+// How long a job can sit at "uploading" with no progress before the
+// visibilitychange handler (fires when the tab becomes visible again, e.g.
+// after an iOS background-suspend) gives up on it and marks it retryable.
+const VISIBILITY_STALE_MS = 2 * 60_000;
 
 export default function Uploader({ token, mode, gallerySlug, galleryName, terms, brand, contributorName }: {
   token: string; mode: "open" | "pin" | "photographer"; gallerySlug: string; galleryName: string; terms: string; brand: { primary: string; accent: string }; contributorName?: string;
@@ -23,33 +33,74 @@ export default function Uploader({ token, mode, gallerySlug, galleryName, terms,
   const [dragging, setDragging] = useState(false);
   const [gateError, setGateError] = useState("");
   const sessionId = useRef<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
   const style = { ["--brand" as any]: brand.primary, ["--accent" as any]: brand.accent } as React.CSSProperties;
   const patch = (id: string, p: Partial<Job>) => setJobs((js) => js.map((j) => (j.id === id ? { ...j, ...p } : j)));
+  // Last time each in-flight job made any progress — seeded when a job
+  // starts uploading, refreshed on every progress tick. Read by the
+  // visibilitychange recovery below to spot a job that was silently frozen
+  // (e.g. the tab got backgrounded/suspended by iOS mid-upload) rather than
+  // one that's just slow.
+  const lastProgressAt = useRef<Map<string, number>>(new Map());
 
   const uploadOne = useCallback(async (job: Job) => {
     patch(job.id, { status: "uploading", progress: 0 });
+    lastProgressAt.current.set(job.id, Date.now());
+    const markProgress = (p: number) => { lastProgressAt.current.set(job.id, Date.now()); patch(job.id, { progress: p }); };
     try {
       const pres = await fetch("/api/upload/presign", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ token, filename: job.file.name, contentType: job.file.type || "application/octet-stream", bytes: job.file.size, uploaderName: name, uploaderEmail: email, pin, agreed, sessionId: sessionId.current }) });
       if (!pres.ok) { const e = await pres.json(); if (e.needPin) { setPinOk(false); setGateError("Session expired — re-enter the PIN."); } throw new Error(e.error || "Couldn't start upload."); }
       const plan = await pres.json();
       sessionId.current = plan.sessionId;
+      let completeRes: Response;
       if (plan.mode === "single") {
-        await put(plan.url, job.file, (p) => patch(job.id, { progress: p }));
-        await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId }) });
+        await put(plan.url, job.file, markProgress);
+        completeRes = await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId }) });
       } else {
         const parts: any[] = []; const done = new Array(plan.urls.length).fill(0);
         const one = async (i: number) => { const chunk = job.file.slice(i * plan.partSize, (i + 1) * plan.partSize);
-          const etag = await put(plan.urls[i], chunk, (p) => { done[i] = (p / 100) * chunk.size; patch(job.id, { progress: Math.round(done.reduce((a, b) => a + b, 0) / job.file.size * 100) }); });
+          const etag = await put(plan.urls[i], chunk, (p) => { done[i] = (p / 100) * chunk.size; markProgress(Math.round(done.reduce((a, b) => a + b, 0) / job.file.size * 100)); });
           parts.push({ ETag: etag, PartNumber: i + 1 }); };
         const queue = plan.urls.map((_: any, i: number) => i);
         await Promise.all(Array.from({ length: PARALLEL }, async () => { for (;;) { const i = queue.shift(); if (i === undefined) return; await one(i); } }));
-        await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId, uploadId: plan.uploadId, parts }) });
+        completeRes = await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId, uploadId: plan.uploadId, parts }) });
       }
+      // Previously ignored entirely — a non-2xx here (e.g. "File didn't
+      // arrive.", the server's own HEAD-check-against-R2 failing) still
+      // marked the job "done" on screen. A guest would see a false success
+      // checkmark for a photo that never actually finished server-side.
+      if (!completeRes.ok) { const e = await completeRes.json().catch(() => ({})); throw new Error(e.error || "Upload didn't finish — please retry."); }
       patch(job.id, { status: "done", progress: 100 });
     } catch (e: any) { patch(job.id, { status: "error", error: e.message }); }
+    finally { lastProgressAt.current.delete(job.id); }
   }, [token, name, email, pin, agreed]);
+
+  // Recovers jobs silently frozen by an iOS Safari background-suspend: JS
+  // execution (including the in-page stall timer in put()) is paused while
+  // the tab is hidden, so nothing can notice mid-freeze. The moment the tab
+  // is visible again, check every still-"uploading" job's last progress —
+  // if it's stale well beyond what a background-suspend explains, it's
+  // never going to finish on its own; surface a retryable error instead of
+  // leaving it spinning forever.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      setJobs((js) => js.map((j) => {
+        if (j.status !== "uploading") return j;
+        const last = lastProgressAt.current.get(j.id) ?? 0;
+        if (now - last > VISIBILITY_STALE_MS) {
+          lastProgressAt.current.delete(j.id);
+          return { ...j, status: "error", error: "Upload was interrupted — tap Retry." };
+        }
+        return j;
+      }));
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   // Files are staged for review first — nothing uploads until Submit.
   const add = useCallback((files: FileList | File[]) => {
@@ -164,15 +215,29 @@ export default function Uploader({ token, mode, gallerySlug, galleryName, terms,
       </label>
 
       {!submitted && (
-        <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
-          onDrop={(e) => { e.preventDefault(); setDragging(false); add(e.dataTransfer.files); }}
-          onClick={() => ready && inputRef.current?.click()}
-          className={`cursor-pointer rounded-[var(--radius)] border-2 border-dashed p-10 text-center transition ${!ready ? "cursor-not-allowed border-[var(--border)] opacity-40" : dragging ? "border-[var(--accent)] bg-white/5" : "border-[var(--border)] hover:border-[var(--text-3)]"}`}>
-          <Upload size={28} className="mx-auto mb-3 text-[var(--text-2)]" />
-          <p className="text-sm font-medium">{!ready ? (mode !== "photographer" && !name.trim() ? "Enter your name first" : "Agree to the terms to continue") : staged.length ? "Add more photos" : "Tap to choose, or drop photos here"}</p>
-          <p className="data mt-1 text-[var(--text-3)]">Photos and video from your camera roll</p>
-          <input ref={inputRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={(e) => e.target.files && add(e.target.files)} />
-        </div>
+        <>
+          {/* Two separate single-type inputs, not one accept="image/*,video/*"
+              input — iOS Safari has a long-standing bug where combining
+              multiple media types with `multiple` silently falls back to
+              single-selection in the native Photos picker. A homogeneous
+              accept type doesn't have this problem, so photos (the common
+              case) get their own dedicated multi-select picker via the main
+              dropzone, and video gets a clearly separate one below. */}
+          <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
+            onDrop={(e) => { e.preventDefault(); setDragging(false); add(e.dataTransfer.files); }}
+            onClick={() => ready && photoInputRef.current?.click()}
+            className={`cursor-pointer rounded-[var(--radius)] border-2 border-dashed p-10 text-center transition ${!ready ? "cursor-not-allowed border-[var(--border)] opacity-40" : dragging ? "border-[var(--accent)] bg-white/5" : "border-[var(--border)] hover:border-[var(--text-3)]"}`}>
+            <Upload size={28} className="mx-auto mb-3 text-[var(--text-2)]" />
+            <p className="text-sm font-medium">{!ready ? (mode !== "photographer" && !name.trim() ? "Enter your name first" : "Agree to the terms to continue") : staged.length ? "Add more photos" : "Tap to choose, or drop photos here"}</p>
+            <p className="data mt-1 text-[var(--text-3)]">Photos from your camera roll</p>
+            <input ref={photoInputRef} type="file" multiple accept="image/*" className="hidden" onChange={(e) => e.target.files && add(e.target.files)} />
+          </div>
+          <button type="button" onClick={() => ready && videoInputRef.current?.click()} disabled={!ready}
+            className="mt-2 flex items-center gap-1.5 text-sm text-[var(--text-3)] transition hover:text-[var(--text-2)] disabled:cursor-not-allowed disabled:opacity-40">
+            <Video size={14} />Uploading a video instead?
+          </button>
+          <input ref={videoInputRef} type="file" multiple accept="video/*" className="hidden" onChange={(e) => e.target.files && add(e.target.files)} />
+        </>
       )}
 
       {jobs.length > 0 && (
@@ -219,15 +284,27 @@ export default function Uploader({ token, mode, gallerySlug, galleryName, terms,
 function put(url: string, body: Blob, onP: (p: number) => void): Promise<string> {
   return new Promise((res, rej) => {
     const x = new XMLHttpRequest(); x.open("PUT", url);
-    x.upload.onprogress = (e) => e.lengthComputable && onP(Math.round(e.loaded / e.total * 100));
-    x.onload = () => x.status >= 200 && x.status < 300 ? res((x.getResponseHeader("ETag") || "").replace(/"/g, "")) : rej(new Error(`Upload failed (${x.status})`));
+    let last = Date.now();
+    x.upload.onprogress = (e) => { last = Date.now(); e.lengthComputable && onP(Math.round(e.loaded / e.total * 100)); };
+    // Stall detection by INACTIVITY, not total duration — XHR's own
+    // `.timeout` measures time-since-send, which would wrongly kill a huge
+    // file on a slow-but-still-working connection. This instead aborts only
+    // when nothing has moved for STALL_MS, so a big video that's genuinely
+    // still transferring is never cut off, but a truly dead connection is.
+    const stallCheck = setInterval(() => {
+      if (Date.now() - last > STALL_MS) { clearInterval(stallCheck); x.abort(); }
+    }, 5000);
+    const cleanup = () => clearInterval(stallCheck);
+    x.onload = () => { cleanup(); x.status >= 200 && x.status < 300 ? res((x.getResponseHeader("ETag") || "").replace(/"/g, "")) : rej(new Error(`Upload failed (${x.status})`)); };
     x.onerror = () => {
+      cleanup();
       // A request that never got a response almost always means the browser blocked
       // it before it left (CORS preflight rejected by the storage bucket) rather than
       // a flaky connection — log the technical detail for whoever's debugging it.
       console.error(`Upload PUT to storage failed with no response (${url.split("?")[0]}). If this happens on every device/network, check the storage bucket's CORS policy allows PUT from this origin.`);
       rej(new Error("Couldn't reach storage. Please try again — if it keeps happening, let the event organiser know."));
     };
+    x.onabort = () => { cleanup(); rej(new Error("Upload stalled — no progress for a while. Tap Retry.")); };
     x.send(body);
   });
 }

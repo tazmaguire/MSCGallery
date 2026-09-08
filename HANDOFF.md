@@ -141,6 +141,9 @@ app/                     Next.js 14 (App Router, TypeScript)
                          admin/update (self-update status/trigger — see below),
                          admin/albums/[id]/thumbnail (video showcase album
                          thumbnail upload — local disk, same as branding),
+                         admin/galleries/[id]/upload-issues (stuck/failed
+                         upload rows for the Settings modal's Upload issues
+                         tab — see "Upload reliability" below),
                          internal/storage-config (worker fetches resolved R2
                          creds at startup, worker-secret authenticated),
                          gallery/unlock (gallery password check),
@@ -162,7 +165,13 @@ app/                     Next.js 14 (App Router, TypeScript)
                          bound to the link) — but NOT the consent checkbox,
                          which every mode still requires; per-file Retry on
                          error, and the Submit-more/Go-to-gallery pair is
-                         reachable even on a partially-failed batch),
+                         reachable even on a partially-failed batch; separate
+                         image-only/video-only file inputs (iOS Safari
+                         bulk-select fix), an inactivity-based stall timeout
+                         and a visibilitychange-driven recovery for a
+                         backgrounded/suspended tab, and the complete-request
+                         response is actually checked now — see "Upload
+                         reliability" below),
                          PendingNotifier (browser Notification API — see
                          "Admin browser notifications" below), ModerationQueue
                          (grid, multi-select, approve-selected/approve-all,
@@ -171,8 +180,10 @@ app/                     Next.js 14 (App Router, TypeScript)
                          button/modal with tabs — Access (password/unlisted/
                          category/download-PIN, db/013), Branding, Upload
                          links, Downloads (db/014, read-only download-activity
-                         list) — replacing what used to be three separate
-                         top-level buttons each opening its own modal),
+                         list), Upload issues (stuck/failed uploads, owner-only
+                         Dismiss — see "Upload reliability" below) —
+                         replacing what used to be three separate top-level
+                         buttons each opening its own modal),
                          pro-upload
                          with attribution name+link and a Drive-style
                          per-file progress queue (XHR upload with progress,
@@ -232,7 +243,9 @@ app/                     Next.js 14 (App Router, TypeScript)
                          UpdatesPanel (polls api/admin/update every 15s — see
                          "Self-update" below)
   src/lib/moderation.ts  single source of truth for pending-queue count/list/
-                         galleries — every page reads through this, not its own query
+                         galleries — every page reads through this, not its own query;
+                         also uploadIssuesCount/uploadIssues (status IN
+                         ('awaiting_upload','failed')) — see "Upload reliability" below
   src/lib/siteIdentity.ts pure display-mode logic (resolveSiteIdentity), split
                          out of siteConfig.ts so client components can import
                          it without pulling in db.ts (pg needs fs/net/tls/dns,
@@ -649,6 +662,161 @@ look random in the first place.
   order isn't achievable with CSS multi-column any other way (would need a
   JS masonry library, deliberately not pulled in — see the lean-dependency
   precedent elsewhere in this doc, e.g. why `CaptionEditor` isn't Tiptap).
+
+---
+
+## Upload reliability — stuck placeholders, stall detection, admin visibility
+
+Guests occasionally reported "it made the thumbnail placeholder but never
+actually uploaded" with nothing to diagnose. Confirmed root causes, none of
+them a network flakiness mystery:
+
+- **The `assets` row is inserted at `status='awaiting_upload'` before any
+  bytes are sent** (`api/upload/presign/route.ts`) — nothing anywhere ever
+  revisited or timed out a row stuck there. If a guest's tab got
+  backgrounded/closed mid-upload (iOS Safari suspends JS execution on a
+  hidden tab — neither `onload` nor `onerror` ever fires), the upload hung
+  forever with zero signal to anyone.
+- **`Uploader.tsx` never checked the `/api/upload/complete` response at
+  all** — even an explicit `{error:"File didn't arrive."}` from the server
+  was silently swallowed and the job still flipped to a green "done"
+  checkmark on screen. This was arguably the single most direct cause of
+  "placeholder but no upload": a guest saw success for a file the server
+  never actually finished processing.
+- **`moderation.ts`'s `PENDING_WHERE` requires `status='ready'`**, so a
+  stuck `awaiting_upload`/`failed` row was invisible in every existing
+  admin view (moderation queue, badge counts) — a true ghost.
+
+Fixes, in `Uploader.tsx` (the guest uploader):
+- The `complete` fetch's response is now checked (`completeRes.ok`); on
+  failure it throws so the existing per-file error/Retry UI shows the
+  server's real message instead of a false "done".
+- `put()`'s XHR now has **inactivity-based stall detection** — a
+  `setInterval` checks time-since-last-`onprogress` every 5s and aborts
+  once it exceeds `STALL_MS` (45s), surfacing "Upload stalled — tap
+  Retry." Deliberately inactivity-based, not XHR's built-in
+  duration-based `.timeout`, which would incorrectly kill a large file on
+  a slow-but-still-working connection.
+- A `visibilitychange` listener recovers from the iOS-background-suspend
+  case specifically: JS timers don't run while a tab is hidden, so nothing
+  can detect a stall *during* the suspension — only when the tab becomes
+  visible again can it retroactively check how stale the last progress
+  event is (`VISIBILITY_STALE_MS`, 2 min) and mark the job an error instead
+  of leaving it spinning forever.
+- The single `accept="image/*,video/*"` file input is now two separate
+  inputs — see "iPhone bulk-select fix" below, same round, same file.
+
+Server-side, `worker/src/index.js` now runs a periodic sweep
+(`sweepStaleUploads()`, every 30 min via `setInterval`, reusing the
+worker's own already-open `db` pool — no new invocation mechanism needed):
+assets still at `status IN ('awaiting_upload','uploaded')` after 2 hours
+are marked `status='failed'` with an explanatory `error`. This turns
+silent ghosts into dated, queryable failure records. The 2h threshold is
+deliberately generous — a slow phone connection on a big video upload is a
+real, non-broken case.
+
+Admin visibility: `lib/moderation.ts`'s `uploadIssues(galleryId)` /
+`uploadIssuesCount(galleryId)` (status IN `('awaiting_upload','failed')`,
+same "invisible everywhere else" gap `PENDING_WHERE` has for `pending`
+assets) is surfaced as a new **"Upload issues"** tab in `GalleryManager`'s
+Settings modal (`api/admin/galleries/[id]/upload-issues`, `GET`-only,
+`getUser()`-gated same as every other admin route) — filename, contributor,
+album, when, and the failure reason for each row, with an owner-only
+"Dismiss" button that reuses the existing `DELETE /api/admin/assets`
+endpoint (soft-delete + purge job) rather than adding a new one.
+
+---
+
+## iPhone bulk-select fix
+
+Reported as "iPhone users can't bulk upload photos anymore" at ~1300
+photos/videos across one gallery — turned out unrelated to scale. Root
+cause, confirmed against the code, not a guess: both `Uploader.tsx` and
+`GalleryManager.tsx`'s admin "Add photos" button used a single
+`<input type="file" multiple accept="image/*,video/*">`. **Combining mixed
+media types (`image/*,video/*`) with `multiple` is a documented iOS Safari
+quirk that silently degrades the native Photos picker to single-select** —
+a homogeneous accept type alone (`image/*` or `video/*`) doesn't have this
+problem.
+
+Fix in both files: split into two inputs, one `accept="image/*" multiple`
+(the primary action — "Add photos" / the main dropzone, unchanged
+label/position) and one `accept="video/*" multiple` behind a small
+secondary trigger ("Uploading a video instead?" in `Uploader.tsx`, an "Add
+video" button in `GalleryManager.tsx`), both wired to the exact same
+existing handler (`add()` / `uploadPro()`) unchanged — that handler only
+ever consumed a `FileList`, agnostic to which input produced it.
+**Zero server-side change was needed or made** — `presign/route.ts` and
+`admin/ingest/route.ts` both derive `kind` purely from each file's own
+`contentType`, never from which input widget it came from. Drag-and-drop
+was never affected either way (`accept` doesn't gate `onDrop`) — this only
+ever fixes the tap-to-pick path, which is exactly where the bug lived.
+
+---
+
+## Mobile/tablet responsive pass
+
+The admin panel, moderation queue, and public gallery were fine on
+desktop but cumbersome on phone/tablet. Fixes, by file:
+
+- **`Gallery.tsx`'s per-photo cart/download/"SHOT BY" controls** were
+  `opacity-0 group-hover:opacity-100` — a real feature loss on touch, not
+  just cosmetic, since `:hover` never fires on a touchscreen: there was no
+  way to cart or download a photo straight from the grid without opening
+  the lightbox first. Now `opacity-100 sm:opacity-0 sm:group-hover:opacity-100`
+  — visible by default below `sm:`, unchanged hover-reveal on desktop.
+- **`SiteHeader.tsx`'s breadcrumb row** relied on `truncate`, which does
+  nothing without a bounded width — inside the flex row it just grew to
+  fit content, so a long gallery/album name pushed the whole bar wider
+  instead of shrinking, with only `overflow-x-auto` (no visual "more
+  offscreen" affordance) to fall back on. Fixed with an explicit
+  `max-w-[7rem] sm:max-w-[12rem]` per crumb.
+- **`GalleryManager.tsx`'s per-album toolbar** (photo/video add buttons,
+  two credit text inputs, rename, download, public/private, the photo-sort
+  select — 6+ controls in one `flex flex-wrap` row) now stacks
+  (`flex flex-col gap-2 sm:flex-row`), with both credit inputs and the
+  sort select `w-full sm:w-auto`/`sm:w-52`.
+- **The bulk-selection bottom bar's "Move to" buttons** — previously one
+  button per album, unbounded, the worst offender for becoming a wall of
+  tiny buttons — replaced with a single `<select>`. Icon-only buttons in
+  this bar also went from `size={12}`/`px-2.5 py-1.5` to `size={16}`/
+  `px-3 py-2`, comfortably past the 44px touch-target guideline.
+- **`Modal`'s `grid place-items-center` + `overflow-y-auto`** clipped the
+  top of anything taller than the viewport — a known CSS quirk where a
+  centered overflowing grid/flex item's excess space is only reachable on
+  one side. Hit `SettingsModal` as soon as a tab had more than a couple of
+  rows. Fixed with `flex items-start sm:items-center justify-center py-8`
+  instead, and the modal itself is now a full-screen sheet below `sm:`
+  (`rounded-none h-full sm:h-auto sm:rounded-[var(--radius)]`) rather than
+  a small centered card with no room to spare on a phone.
+- **`SettingsModal`'s tab strip** (now 5 tabs — Access/Branding/Upload
+  links/Downloads/Upload issues) is icon-only below `sm:` (label in a
+  `hidden sm:inline` span) with `overflow-x-auto` as a safety net.
+- **The floating pro-upload queue panel** (`fixed bottom-4 left-4 w-80`)
+  could overlap the bulk-selection bar on a narrow screen. Now
+  `inset-x-4 sm:inset-x-auto sm:left-4 sm:w-80`.
+- **`ModerationQueue.tsx`'s select/reject tile buttons** — `h-7 w-7` (28px,
+  under the 44px guideline) — are now `h-9 w-9` below `sm:`, unchanged on
+  desktop.
+
+Not done this round (lower-traffic surfaces, same category of fix if
+revisited): the gallery-header action-row wrapping, `LinksSettings`' link
+rows/mode-picker grid.
+
+---
+
+## Cart auto-clears after "Download all"
+
+`Gallery.tsx`'s "Download all" — both the plain-link (open gallery) and
+PIN-gated (`requestDownload` callback) branches — now clears the cart
+right after triggering the download, instead of leaving it full. The
+existing standalone "Clear cart" button is unchanged for anyone who wants
+to empty it without downloading. The ordering matters:
+`window.location.href = cartDownloadUrl` (or `e.preventDefault()` +
+the same, for the plain-link branch) always runs **before** `clearCart()`
+— `cartDownloadUrl` is derived reactively from `cart` state, so clearing
+first would strip every `id=` param from the URL before the browser reads
+it.
 
 ---
 
@@ -1087,8 +1255,11 @@ Confirm with `aws s3api get-bucket-cors --endpoint-url "$S3_ENDPOINT" --bucket "
 Until both are right, no guest upload can ever complete — which also means
 nothing ever reaches the moderation queue (queue requires `status='ready'`,
 which an asset only reaches after its bytes actually land in R2). Asset rows
-from failed attempts get created (visible as a placeholder in admin, stuck at
-`status='awaiting_upload'`) but never go further — harmless clutter, safe to
-ignore or delete. If uploads still fail after both are confirmed correct, check
-`docker compose logs worker` next — processing failures also keep assets out
-of the queue (they never reach `ready`).
+from failed attempts get created and stuck at `status='awaiting_upload'` —
+visible in GalleryManager's Settings → Upload issues tab (not just a
+placeholder with no diagnostic trail anymore, see "Upload reliability"
+above), and the worker's `sweepStaleUploads()` marks them `failed` after 2h
+so they don't linger indefinitely either way. If uploads still fail after
+both are confirmed correct, check `docker compose logs worker` next —
+processing failures also keep assets out of the queue (they never reach
+`ready`).

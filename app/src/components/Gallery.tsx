@@ -217,7 +217,13 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
           <div className="mx-auto max-w-7xl px-6 py-4">
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
-                {!single && <button onClick={() => setOpenAlbum(null)} className="eyebrow mb-1 flex items-center gap-1.5 transition hover:text-[var(--text)]"><ArrowLeft size={12} /> All albums</button>}
+                {/* Real touch target, not just a small text link — this is
+                    the only way back to the album list on the public site,
+                    and at 11px text + a 12px icon with no padding it was
+                    genuinely hard to tap on a phone/tablet. Negative margin
+                    keeps it visually flush with the title below despite the
+                    bigger hit area. */}
+                {!single && <button onClick={() => setOpenAlbum(null)} className="eyebrow -ml-2 mb-1 flex items-center gap-1.5 rounded-[var(--radius)] px-2 py-2 transition hover:bg-[var(--surface-2)] hover:text-[var(--text)]"><ArrowLeft size={16} /> All albums</button>}
                 <h1 className="display truncate text-3xl sm:text-4xl">{album.name}</h1>
                 <p className="data mt-0.5 text-[var(--text-2)]">{album.count} photos</p>
               </div>
@@ -282,17 +288,20 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
               <figure key={a.id} className={`group relative overflow-hidden rounded-[var(--radius)] bg-[var(--surface)] ${cart.has(a.id) ? "ring-2 ring-[var(--brand)]" : ""}`}>
                 <img src={a.thumb} alt="" loading="lazy" onError={onThumbError} onClick={() => setLb({ album: album.id, i: assets.indexOf(a) })} onContextMenu={blockSave} draggable={false} className="aspect-square w-full select-none object-cover cursor-zoom-in transition duration-300 group-hover:opacity-95 [-webkit-touch-callout:none]" />
                 {a.kind === "video" && <div className="pointer-events-none absolute inset-0 grid place-items-center"><div className="rounded-full bg-black/50 p-3 backdrop-blur"><Play size={18} fill="white" /></div></div>}
-                {/* Visible by default below sm: — :hover never fires on touch, so
-                    without this a phone/tablet visitor has no way to cart,
-                    download, or see credit for a photo from the grid at all
-                    (only path would be opening the lightbox first). Desktop
-                    keeps the existing hover-reveal. */}
+                {/* Visible by default on every device — a viewport-width
+                    breakpoint (the first cut of this fix) is the wrong
+                    signal: an iPad is well past the sm: breakpoint but is
+                    still a touchscreen, so :hover-reveal never fired there
+                    either. Gated on actual pointer capability instead — only
+                    a real mouse (hover:hover, pointer:fine) gets the
+                    hover-to-reveal declutter; every touch device, phone or
+                    tablet, always sees these. */}
                 <button onClick={(e) => { e.stopPropagation(); toggleCart(a.id); }} title={cart.has(a.id) ? "Remove from cart" : "Add to cart"}
-                  className={`absolute left-2 top-2 grid h-8 w-8 place-items-center rounded-full backdrop-blur transition focus:opacity-100 ${cart.has(a.id) ? "bg-[var(--brand)] text-white opacity-100" : "bg-black/40 text-white/90 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}>
+                  className={`absolute left-2 top-2 grid h-8 w-8 place-items-center rounded-full backdrop-blur transition focus:opacity-100 ${cart.has(a.id) ? "bg-[var(--brand)] text-white opacity-100" : "bg-black/40 text-white/90 opacity-100 [@media(hover:hover)_and_(pointer:fine)]:opacity-0 [@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100"}`}>
                   {cart.has(a.id) ? <Check size={15} /> : <ShoppingCart size={15} />}
                 </button>
-                <button onClick={(e) => { e.stopPropagation(); requestDownload(() => dl(a.download_url, a.download_filename)); }} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/40 text-white/90 opacity-100 backdrop-blur transition sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100" title="Download"><Download size={15} /></button>
-                <figcaption className="absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-black/40 py-1 pl-2.5 pr-1.5 text-white/90 opacity-100 backdrop-blur transition sm:opacity-0 sm:group-hover:opacity-100">
+                <button onClick={(e) => { e.stopPropagation(); requestDownload(() => dl(a.download_url, a.download_filename)); }} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/40 text-white/90 opacity-100 backdrop-blur transition [@media(hover:hover)_and_(pointer:fine)]:opacity-0 [@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100 focus:opacity-100" title="Download"><Download size={15} /></button>
+                <figcaption className="absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-black/40 py-1 pl-2.5 pr-1.5 text-white/90 opacity-100 backdrop-blur transition [@media(hover:hover)_and_(pointer:fine)]:opacity-0 [@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100">
                   <button onClick={(e) => { e.stopPropagation(); setFilterContributor({ id: a.contributor_id, name: a.firstName }); }} className="data text-[11px] hover:underline" title={`See all photos by ${a.firstName}`}>SHOT BY {a.firstName}</button>
                   {a.contributorLink && <a href={a.contributorLink} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()} title={`${a.firstName}'s link`} className="text-white/70 hover:text-white"><ExternalLink size={11} /></a>}
                 </figcaption>
@@ -341,14 +350,18 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
 
       {/* Always visible — not just when the cart has items — so it reads as a
           permanent feature of the gallery, not something that appears out of
-          nowhere. */}
-      <button onClick={() => setCartOpen(true)} className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full bg-[var(--brand)] px-4 py-3 text-white shadow-2xl transition hover:brightness-110" title="Cart">
+          nowhere. bottom-[max(1rem,env(safe-area-inset-bottom))] instead of
+          a plain bottom-4 — on an iPhone with a home-indicator bar (or any
+          device that reports a bottom safe-area inset), a plain fixed
+          bottom-4 button can end up partly or fully behind that system UI,
+          reading as "the basket disappears off the page". */}
+      <button onClick={() => setCartOpen(true)} className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-40 flex items-center gap-2 rounded-full bg-[var(--brand)] px-4 py-3 text-white shadow-2xl transition hover:brightness-110" title="Cart">
         <ShoppingCart size={18} />
         <span className="text-sm font-bold">{cart.size}</span>
       </button>
 
       {toast && (
-        <div className="fixed bottom-20 right-4 z-40 max-w-xs rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm shadow-2xl">{toast}</div>
+        <div className="fixed bottom-[max(5rem,calc(env(safe-area-inset-bottom)+4rem))] right-4 z-40 max-w-xs rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm shadow-2xl">{toast}</div>
       )}
 
       {identityModalOpen && <DownloadIdentityModal onSuccess={onIdentityCaptured} onClose={() => setIdentityModalOpen(false)} />}

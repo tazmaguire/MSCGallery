@@ -763,8 +763,41 @@ desktop but cumbersome on phone/tablet. Fixes, by file:
   `opacity-0 group-hover:opacity-100` — a real feature loss on touch, not
   just cosmetic, since `:hover` never fires on a touchscreen: there was no
   way to cart or download a photo straight from the grid without opening
-  the lightbox first. Now `opacity-100 sm:opacity-0 sm:group-hover:opacity-100`
-  — visible by default below `sm:`, unchanged hover-reveal on desktop.
+  the lightbox first. **First cut of this fix used a `sm:` viewport-width
+  breakpoint (`opacity-100 sm:opacity-0 sm:group-hover:opacity-100`), which
+  was wrong** — an iPad is well past 640px but is still a touchscreen, so
+  the hover-reveal never fired there either; a user specifically reported
+  this back as still broken on tablet. Fixed properly with a pointer-capability
+  media query instead of a width breakpoint:
+  `[@media(hover:hover)_and_(pointer:fine)]:opacity-0
+  [@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100` — only a
+  device that actually has a precise hovering pointer (a real mouse/trackpad)
+  gets the hover-declutter; every touchscreen, phone or tablet, always sees
+  these regardless of screen size. **If you ever add another
+  hover-to-reveal control anywhere in this app, gate it on `(hover: hover)
+  and (pointer: fine)`, never on a `sm:`/`md:` width breakpoint** — width
+  and touch capability are unrelated axes.
+- **The "All albums" back-navigation link** (`Gallery.tsx`, the only way
+  back to the album list once inside one) was 11px `eyebrow`-styled text
+  plus a 12px icon with zero padding — reported as "tiny" and hard to tap.
+  Now a real touch target: `-ml-2 px-2 py-2` (negative margin keeps it
+  visually flush with the title below it) and a 16px icon, keeping the
+  same small-caps typographic style everywhere else `eyebrow` is used as a
+  label rather than a control.
+- **The floating cart button** (`fixed bottom-4 right-4`) could end up
+  partly behind the home-indicator bar on a notched iPhone, reported as
+  "the basket sometimes disappears off the page". Two-part fix:
+  `viewport` in `app/layout.tsx` now sets `viewportFit: "cover"` (without
+  it, `env(safe-area-inset-bottom)` always resolves to `0` and content
+  never draws under that area in the first place — Safari just
+  letterboxes it away instead, which is a different, blunter fix with its
+  own tradeoffs, so making the inset actually meaningful was the more
+  surgical option), and the button's position is
+  `bottom-[max(1rem,env(safe-area-inset-bottom))]` (the toast right above
+  it uses the same pattern) — the larger of a 1rem margin or the actual
+  safe-area inset, so it never sits closer to the true bottom edge than
+  before on a device with no notch/home-indicator, but clears it on one
+  that has it.
 - **`SiteHeader.tsx`'s breadcrumb row** relied on `truncate`, which does
   nothing without a bounded width — inside the flex row it just grew to
   fit content, so a long gallery/album name pushed the whole bar wider

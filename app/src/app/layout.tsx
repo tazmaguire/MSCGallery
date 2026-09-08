@@ -1,4 +1,5 @@
 import "./globals.css";
+import type { Viewport } from "next";
 import { cookies } from "next/headers";
 import { siteConfig } from "@/lib/siteConfig";
 
@@ -10,6 +11,12 @@ export async function generateMetadata() {
     icons: site.faviconUrl ? { icon: site.faviconUrl, shortcut: site.faviconUrl } : undefined,
   };
 }
+
+// viewportFit: "cover" lets content draw under the iPhone notch/home-indicator
+// area instead of Safari letterboxing it away — without this, env(safe-area-
+// inset-bottom) always resolves to 0 and the floating cart button's inset
+// (Gallery.tsx) can't actually keep clear of the home-indicator bar.
+export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
 
 // Default fonts loaded app-wide (galleries can override with their own).
 const DEFAULT_FONTS = "https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap";

@@ -424,8 +424,12 @@ function SettingsModal({ gallery, albums, links, reloadLinks, isOwner, initialTa
 // this distinctly ("Duplicate — ...") from a genuine failure, since it
 // needs no follow-up at all (the photo is already in the gallery under the
 // other upload). Matched by prefix rather than a new column/status value —
-// the worker fully controls this string, no schema change needed.
-const isDuplicateIssue = (i: any) => i.error?.startsWith("Duplicate");
+// the worker fully controls this string, no schema change needed. Also
+// matches the raw Postgres text ("duplicate key value violates unique
+// constraint ...assets_gallery_id_checksum_idx") so rows that failed
+// before this classification existed still land in the right section
+// instead of needing every existing gallery's backlog hand-sorted.
+const isDuplicateIssue = (i: any) => i.error?.startsWith("Duplicate") || i.error?.includes("assets_gallery_id_checksum_idx");
 
 function UploadIssuesTab({ galleryId, isOwner }: any) {
   const [issues, setIssues] = useState<any[] | null>(null);

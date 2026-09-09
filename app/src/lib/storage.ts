@@ -113,6 +113,20 @@ export async function deleteObject(key: string) {
 export async function objectExists(key: string) {
   try { await (await client()).send(new HeadObjectCommand({ Bucket: await bucket(), Key: key })); return true; } catch { return false; }
 }
+// Existence alone doesn't rule out a truncated/corrupted upload — a client
+// that dropped bytes mid-PUT but still got a 2xx (or a multipart complete
+// with a short final part) would pass objectExists() with a genuinely
+// incomplete object. This confirms R2's own recorded size for the key
+// matches what the client declared at presign time (assets.bytes), so
+// "the file is there" actually means "the file is there, intact" before
+// the guest sees a success checkmark. See api/upload/complete/route.ts.
+export async function verifyObjectSize(key: string, expectedBytes: number): Promise<{ ok: boolean; actualBytes: number | null }> {
+  try {
+    const head = await (await client()).send(new HeadObjectCommand({ Bucket: await bucket(), Key: key }));
+    const actualBytes = head.ContentLength ?? null;
+    return { ok: actualBytes === expectedBytes, actualBytes };
+  } catch { return { ok: false, actualBytes: null }; }
+}
 
 // Stream an object's body straight from R2 (used by the zip route). Keeps the
 // s3 client + bucket name private to this module.

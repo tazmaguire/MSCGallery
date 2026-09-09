@@ -757,6 +757,45 @@ album, when, and the failure reason for each row, with an owner-only
 "Dismiss" button that reuses the existing `DELETE /api/admin/assets`
 endpoint (soft-delete + purge job) rather than adding a new one.
 
+**"Intact", not just "arrived" — a real integrity check before the guest
+sees a checkmark, and a visible step, not something invisible.** Existence
+alone (`objectExists()`, a plain `HeadObjectCommand`) doesn't rule out a
+truncated/corrupted upload — a dropped connection mid-PUT that still
+somehow returned 2xx, or a multipart completion with a short final part,
+would both pass an existence-only check. `storage.ts`'s `verifyObjectSize()`
+compares R2's own recorded `ContentLength` for the uploaded key against
+`assets.bytes` (the size the client declared at presign time) — an exact
+mismatch is a clean, retryable "File arrived incomplete" rather than a
+false success. `api/upload/complete/route.ts` uses this instead of the
+plain existence check, and both `Uploader.tsx` (guest) and
+`GalleryManager.tsx`'s pro-upload queue now patch each job to a distinct
+**`"verifying"`** status (progress bar held at 100%, a "Verifying…"
+caption) between the PUT finishing and the checkmark appearing, so this
+check is something the guest/admin actually sees happen, not a silent gap
+between "100%" and "done". **`GalleryManager.tsx`'s pro-upload path had
+the exact same "ignores the complete response" bug `Uploader.tsx` was
+fixed for earlier in this doc** — `uploadPro`'s `await fetch("/api/upload/
+complete", ...)` was never checked, so it always showed "done" regardless
+of what the server found. Fixed the same way, and factored the per-file
+upload logic out into `uploadOnePro()` so a failed pro-upload item can
+now be individually retried (previously: no retry at all, just a
+permanent "Failed" label).
+
+**A retry can race a stale, abandoned attempt — guarded in `Uploader.tsx`
+with a per-job attempt token.** The `visibilitychange` recovery (above)
+marks a frozen job an error, but doesn't and can't cancel its underlying
+`fetch`/XHR — nothing stops that original request from actually
+succeeding moments later. Without a guard, that late success would land
+via `patch()` and flip the job back to "done" even after the guest has
+already tapped Retry and started a fresh attempt — silently overwriting
+the new attempt's state with the old one's, and, since both attempts
+sent the same file, contributing to exactly the duplicate-checksum noise
+described below. `attemptToken` (a `Map<jobId, number>`, bumped both by
+each new `uploadOne()` call and by the abandon path) makes every
+`patch()` after an `await` conditional on `isCurrent()` — a resolution
+whose token has since been superseded is silently dropped instead of
+mutating state that's no longer current.
+
 ---
 
 ## iPhone bulk-select fix

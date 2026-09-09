@@ -7,7 +7,7 @@ import { formatBytes, flatMonthlyCost, formatUSD } from "@/lib/storageCost";
 import { parseVideoUrl } from "@/lib/videoEmbed";
 import CaptionEditor from "@/components/CaptionEditor";
 
-type ProUploadItem = { id: string; name: string; bytes: number; progress: number; status: "queued" | "uploading" | "done" | "error"; error?: string };
+type ProUploadItem = { id: string; name: string; file: File; bytes: number; progress: number; status: "queued" | "uploading" | "verifying" | "done" | "error"; error?: string };
 const PRO_PARALLEL_PARTS = 4;
 
 // Duplicated from Uploader.tsx (the guest uploader) rather than shared —
@@ -72,47 +72,62 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
   const selectAllAssets = () => setSel(new Set(sortedAssets.map(a => a.id)));
   const deselectAllAssets = () => setSel(new Set());
 
+  const patchPro = (id: string, p: Partial<ProUploadItem>) => setProQueue((q) => q.map((x) => (x.id === id ? { ...x, ...p } : x)));
+
+  const uploadOnePro = async (file: File, id: string) => {
+    patchPro(id, { status: "uploading", progress: 0, error: undefined });
+    try {
+      const pres = await fetch("/api/admin/ingest", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ albumId: active, contributorName: proCreditName.trim() || undefined, creditLink: proCreditLink.trim() || undefined, filename: file.name, contentType: file.type, bytes: file.size }) });
+      const plan = await pres.json();
+      if (!pres.ok) throw new Error(plan.error || "Couldn't start upload.");
+      let completeRes: Response;
+      if (plan.mode === "single") {
+        await putWithProgress(plan.url, file, (p) => patchPro(id, { progress: p }));
+        patchPro(id, { status: "verifying" });
+        completeRes = await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId }) });
+      } else {
+        // Multipart (files over the single-PUT threshold — routine for video).
+        const parts: { ETag: string; PartNumber: number }[] = []; const done = new Array(plan.urls.length).fill(0);
+        const uploadPart = async (idx: number) => {
+          const chunk = file.slice(idx * plan.partSize, (idx + 1) * plan.partSize);
+          const etag = await putWithProgress(plan.urls[idx], chunk, (p) => {
+            done[idx] = (p / 100) * chunk.size;
+            patchPro(id, { progress: Math.round((done.reduce((a, b) => a + b, 0) / file.size) * 100) });
+          });
+          parts.push({ ETag: etag, PartNumber: idx + 1 });
+        };
+        const remaining = plan.urls.map((_: any, idx: number) => idx);
+        await Promise.all(Array.from({ length: PRO_PARALLEL_PARTS }, async () => {
+          for (;;) { const idx = remaining.shift(); if (idx === undefined) return; await uploadPart(idx); }
+        }));
+        parts.sort((a, b) => a.PartNumber - b.PartNumber);
+        patchPro(id, { status: "verifying" });
+        completeRes = await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId, uploadId: plan.uploadId, parts }) });
+      }
+      // Previously ignored entirely — a non-2xx here (the server's own
+      // check that the file actually landed in R2 intact, at the expected
+      // size) still marked the item "done". "verifying" above makes that
+      // check a visible step, not something invisible between 100% and the
+      // checkmark.
+      if (!completeRes.ok) { const e = await completeRes.json().catch(() => ({})); throw new Error(e.error || "Upload didn't finish — please retry."); }
+      patchPro(id, { status: "done", progress: 100 });
+    } catch (e: any) {
+      patchPro(id, { status: "error", error: e.message || "Upload failed" });
+    }
+  };
+
   const uploadPro = async (files: FileList) => {
     if (!active) return;
-    const fileArr = Array.from(files);
-    const items: ProUploadItem[] = fileArr.map((f) => ({ id: crypto.randomUUID(), name: f.name, bytes: f.size, progress: 0, status: "queued" }));
+    const items: ProUploadItem[] = Array.from(files).map((f) => ({ id: crypto.randomUUID(), name: f.name, file: f, bytes: f.size, progress: 0, status: "queued" }));
     setProQueue(items); setShowProQueue(true); setUploading(true);
-    const patch = (id: string, p: Partial<ProUploadItem>) => setProQueue((q) => q.map((x) => (x.id === id ? { ...x, ...p } : x)));
+    for (const item of items) await uploadOnePro(item.file, item.id);
+    setUploading(false); setTimeout(loadAssets, 1500);
+  };
 
-    for (let i = 0; i < fileArr.length; i++) {
-      const file = fileArr[i]; const id = items[i].id;
-      patch(id, { status: "uploading" });
-      try {
-        const pres = await fetch("/api/admin/ingest", { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ albumId: active, contributorName: proCreditName.trim() || undefined, creditLink: proCreditLink.trim() || undefined, filename: file.name, contentType: file.type, bytes: file.size }) });
-        const plan = await pres.json();
-        if (!pres.ok) throw new Error(plan.error || "Couldn't start upload.");
-        if (plan.mode === "single") {
-          await putWithProgress(plan.url, file, (p) => patch(id, { progress: p }));
-          await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId }) });
-        } else {
-          // Multipart (files over the single-PUT threshold — routine for video).
-          const parts: { ETag: string; PartNumber: number }[] = []; const done = new Array(plan.urls.length).fill(0);
-          const uploadPart = async (idx: number) => {
-            const chunk = file.slice(idx * plan.partSize, (idx + 1) * plan.partSize);
-            const etag = await putWithProgress(plan.urls[idx], chunk, (p) => {
-              done[idx] = (p / 100) * chunk.size;
-              patch(id, { progress: Math.round((done.reduce((a, b) => a + b, 0) / file.size) * 100) });
-            });
-            parts.push({ ETag: etag, PartNumber: idx + 1 });
-          };
-          const remaining = plan.urls.map((_: any, idx: number) => idx);
-          await Promise.all(Array.from({ length: PRO_PARALLEL_PARTS }, async () => {
-            for (;;) { const idx = remaining.shift(); if (idx === undefined) return; await uploadPart(idx); }
-          }));
-          parts.sort((a, b) => a.PartNumber - b.PartNumber);
-          await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId, uploadId: plan.uploadId, parts }) });
-        }
-        patch(id, { status: "done", progress: 100 });
-      } catch (e: any) {
-        patch(id, { status: "error", error: e.message || "Upload failed" });
-      }
-    }
+  const retryPro = async (item: ProUploadItem) => {
+    setUploading(true);
+    await uploadOnePro(item.file, item.id);
     setUploading(false); setTimeout(loadAssets, 1500);
   };
   const move = async (albumId: string) => { await fetch("/api/admin/assets", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds: [...sel], albumId }) }); setSel(new Set()); loadAssets(); };
@@ -304,11 +319,12 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
                 <div className="flex items-center justify-between gap-2">
                   <span className="data truncate text-[var(--text-2)]">{item.name}</span>
                   {item.status === "done" && <Check size={13} className="shrink-0 text-emerald-400" />}
-                  {item.status === "error" && <span className="data shrink-0 text-[var(--brand)]" title={item.error}>Failed</span>}
+                  {item.status === "error" && <button onClick={() => retryPro(item)} className="data shrink-0 text-[var(--brand)] underline decoration-dotted" title={item.error}>Failed — Retry</button>}
+                  {item.status === "verifying" && <span className="data shrink-0 text-[var(--text-3)]">Verifying…</span>}
                   {(item.status === "uploading" || item.status === "queued") && <span className="data shrink-0 text-[var(--text-3)]">{item.progress}%</span>}
                 </div>
                 <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[var(--bg-2)]">
-                  <div className={`h-full transition-all ${item.status === "error" ? "bg-[var(--brand)]" : item.status === "done" ? "bg-emerald-400" : "bg-[var(--accent)]"}`} style={{ width: `${item.status === "queued" ? 0 : item.progress}%` }} />
+                  <div className={`h-full transition-all ${item.status === "error" ? "bg-[var(--brand)]" : item.status === "done" ? "bg-emerald-400" : "bg-[var(--accent)]"}`} style={{ width: `${item.status === "queued" ? 0 : item.status === "verifying" ? 100 : item.progress}%` }} />
                 </div>
               </div>
             ))}

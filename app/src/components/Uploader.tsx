@@ -9,7 +9,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Upload, Check, AlertCircle, Loader2, Lock, ShieldCheck, X, Info, Images, RotateCcw, Camera, Video } from "lucide-react";
 
-type Job = { id: string; file: File; progress: number; status: "staged" | "queued" | "uploading" | "done" | "error"; error?: string };
+type Job = { id: string; file: File; progress: number; status: "staged" | "queued" | "uploading" | "verifying" | "done" | "error"; error?: string };
 const PARALLEL = 4;
 // A tab backgrounded/suspended by iOS Safari mid-upload freezes ALL JS on the
 // page — including any in-page stall timer — so this alone can't catch that
@@ -43,8 +43,22 @@ export default function Uploader({ token, mode, gallerySlug, galleryName, terms,
   // (e.g. the tab got backgrounded/suspended by iOS mid-upload) rather than
   // one that's just slow.
   const lastProgressAt = useRef<Map<string, number>>(new Map());
+  // Identifies which *attempt* at a given job id is the current one — a
+  // plain "is this job still uploading?" check isn't enough once retries
+  // exist: the visibilitychange recovery below can abandon a frozen attempt
+  // while its actual network requests keep running in the background
+  // (marking the job an error doesn't cancel them); if the guest then taps
+  // Retry, a NEW attempt starts and immediately becomes "uploading" again —
+  // and the old, abandoned attempt's late-arriving success/failure would
+  // otherwise stomp over the new attempt's state the moment it resolves.
+  // Bumped on every uploadOne() call and by the abandon path; a resolution
+  // whose token no longer matches is stale and silently ignored.
+  const attemptToken = useRef<Map<string, number>>(new Map());
 
   const uploadOne = useCallback(async (job: Job) => {
+    const myToken = (attemptToken.current.get(job.id) ?? 0) + 1;
+    attemptToken.current.set(job.id, myToken);
+    const isCurrent = () => attemptToken.current.get(job.id) === myToken;
     patch(job.id, { status: "uploading", progress: 0 });
     lastProgressAt.current.set(job.id, Date.now());
     const markProgress = (p: number) => { lastProgressAt.current.set(job.id, Date.now()); patch(job.id, { progress: p }); };
@@ -57,6 +71,7 @@ export default function Uploader({ token, mode, gallerySlug, galleryName, terms,
       let completeRes: Response;
       if (plan.mode === "single") {
         await put(plan.url, job.file, markProgress);
+        if (isCurrent()) patch(job.id, { status: "verifying" });
         completeRes = await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId }) });
       } else {
         const parts: any[] = []; const done = new Array(plan.urls.length).fill(0);
@@ -65,34 +80,48 @@ export default function Uploader({ token, mode, gallerySlug, galleryName, terms,
           parts.push({ ETag: etag, PartNumber: i + 1 }); };
         const queue = plan.urls.map((_: any, i: number) => i);
         await Promise.all(Array.from({ length: PARALLEL }, async () => { for (;;) { const i = queue.shift(); if (i === undefined) return; await one(i); } }));
+        if (isCurrent()) patch(job.id, { status: "verifying" });
         completeRes = await fetch("/api/upload/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: plan.assetId, uploadId: plan.uploadId, parts }) });
       }
-      // Previously ignored entirely — a non-2xx here (e.g. "File didn't
-      // arrive.", the server's own HEAD-check-against-R2 failing) still
-      // marked the job "done" on screen. A guest would see a false success
-      // checkmark for a photo that never actually finished server-side.
+      // "verifying" is a real, distinct step, not cosmetic — the server
+      // checks R2's own recorded size for the uploaded object against what
+      // this file actually is (api/upload/complete, verifyObjectSize in
+      // storage.ts) before this resolves, so a truncated/corrupted upload
+      // is caught here instead of getting a false success checkmark. A
+      // non-2xx here used to be ignored entirely — the job still flipped to
+      // "done" even when the server's own check failed.
       if (!completeRes.ok) { const e = await completeRes.json().catch(() => ({})); throw new Error(e.error || "Upload didn't finish — please retry."); }
-      patch(job.id, { status: "done", progress: 100 });
-    } catch (e: any) { patch(job.id, { status: "error", error: e.message }); }
-    finally { lastProgressAt.current.delete(job.id); }
+      if (isCurrent()) patch(job.id, { status: "done", progress: 100 });
+    } catch (e: any) { if (isCurrent()) patch(job.id, { status: "error", error: e.message }); }
+    // Only clear this attempt's own bookkeeping — a stale attempt resolving
+    // late must not wipe out a newer retry's in-progress lastProgressAt
+    // entry (keyed by job id, not by attempt).
+    finally { if (isCurrent()) lastProgressAt.current.delete(job.id); }
   }, [token, name, email, pin, agreed]);
 
   // Recovers jobs silently frozen by an iOS Safari background-suspend: JS
   // execution (including the in-page stall timer in put()) is paused while
   // the tab is hidden, so nothing can notice mid-freeze. The moment the tab
-  // is visible again, check every still-"uploading" job's last progress —
-  // if it's stale well beyond what a background-suspend explains, it's
-  // never going to finish on its own; surface a retryable error instead of
-  // leaving it spinning forever.
+  // is visible again, check every still-"uploading"/"verifying" job's last
+  // progress — if it's stale well beyond what a background-suspend
+  // explains, it's never going to finish on its own; surface a retryable
+  // error instead of leaving it spinning forever. Covers "verifying" too —
+  // that's a real network round-trip (api/upload/complete), not instant,
+  // and can freeze mid-flight exactly the same way the PUT itself can.
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       const now = Date.now();
       setJobs((js) => js.map((j) => {
-        if (j.status !== "uploading") return j;
+        if (j.status !== "uploading" && j.status !== "verifying") return j;
         const last = lastProgressAt.current.get(j.id) ?? 0;
         if (now - last > VISIBILITY_STALE_MS) {
           lastProgressAt.current.delete(j.id);
+          // Invalidates the abandoned attempt's token — its underlying
+          // fetch/XHR keeps running in the background (nothing here cancels
+          // it), so without this its late success/failure would still land
+          // via isCurrent() and stomp over whatever a subsequent Retry does.
+          attemptToken.current.set(j.id, (attemptToken.current.get(j.id) ?? 0) + 1);
           return { ...j, status: "error", error: "Upload was interrupted — tap Retry." };
         }
         return j;
@@ -250,12 +279,16 @@ export default function Uploader({ token, mode, gallerySlug, galleryName, terms,
               <div className="shrink-0">
                 {j.status === "done" && <Check size={16} className="text-emerald-400" />}
                 {j.status === "error" && <AlertCircle size={16} className="text-[var(--brand)]" />}
-                {j.status === "uploading" && <Loader2 size={16} className="animate-spin text-[var(--text-2)]" />}
+                {(j.status === "uploading" || j.status === "verifying") && <Loader2 size={16} className="animate-spin text-[var(--text-2)]" />}
                 {(j.status === "queued" || j.status === "staged") && <div className="h-4 w-4 rounded-full bg-white/10" />}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm">{j.file.name}</div>
-                {j.status === "uploading" && <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10"><div className="h-full transition-all" style={{ width: `${j.progress}%`, background: "var(--brand)" }} /></div>}
+                {(j.status === "uploading" || j.status === "verifying") && <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10"><div className="h-full transition-all" style={{ width: `${j.status === "verifying" ? 100 : j.progress}%`, background: "var(--brand)" }} /></div>}
+                {/* A visible, distinct step — not folded silently into
+                    "uploading" — so the guest sees that a real integrity
+                    check happens before the tick, not just an animation. */}
+                {j.status === "verifying" && <div className="data mt-1 text-[var(--text-3)]">Verifying upload…</div>}
                 {j.error && <div className="data mt-1 text-[var(--brand)]">{j.error}</div>}
               </div>
               {!submitted && j.status === "staged" && <button onClick={() => removeStaged(j.id)} className="shrink-0 text-[var(--text-3)] transition hover:text-[var(--brand)]" title="Remove"><X size={16} /></button>}

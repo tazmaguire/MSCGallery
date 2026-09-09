@@ -117,17 +117,40 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
   const archive = archiver("zip", { store: true }); // STORE, not deflate
   const out = new PassThrough();
   archive.pipe(out);
-  // Swallow archiver's own async warnings/errors (e.g. a stream that broke
-  // mid-append) rather than letting them crash the process — the per-item
-  // try/catch below already handles the common case (object missing
+  // Don't let archiver's own async warnings/errors crash the process — the
+  // per-item try/catch below already handles the common case (object missing
   // entirely); this is the backstop for the rarer mid-stream failure.
+  // An archive-level error is FATAL: nothing more will ever be written, so
+  // the output stream must be destroyed too. Merely logging it (what this
+  // did before) left `out` open forever — the client kept waiting on a
+  // response that could never arrive, which is why a failed download
+  // presented as an infinite hang instead of a failure the browser could
+  // actually report.
   archive.on("warning", (e) => console.error("zip warning:", e.message));
-  archive.on("error", (e) => console.error("zip error:", e.message));
+  archive.on("error", (e) => { console.error("zip error:", e.message); out.destroy(e); });
 
-  // Feed the archive. Each entry is a fresh stream from R2; archiver applies
-  // backpressure, so we never pull faster than the client drains. One bad or
-  // missing key must not take down the whole download — skip it and keep
-  // going, so a single stale R2 object doesn't 502 the entire zip.
+  // Resolves once archiver has finished writing the entry it's currently
+  // processing. Listeners are attached per-wait and removed on settle so
+  // this can't leak listeners across a 1000+ file archive.
+  const entryWritten = () => new Promise<void>((resolve) => {
+    const done = () => { archive.off("entry", done); archive.off("error", done); resolve(); };
+    archive.once("entry", done);
+    archive.once("error", done);
+  });
+
+  // Feed the archive STRICTLY ONE OBJECT AT A TIME. archiver applies
+  // backpressure on the write side, but `append()` only queues an entry and
+  // returns immediately — so without awaiting each entry, this loop opened a
+  // fresh R2 connection for EVERY row up front (1300+ of them on a big
+  // gallery) while the zip writer consumed them one at a time. Connections
+  // opened at the start then sat idle for minutes waiting their turn and
+  // died: ECONNRESET, or "the difference between the request time and the
+  // server's time is too large" (a signed request used long after it was
+  // created — not a clock problem). A dead source stream mid-entry stalls
+  // the archive, so the response stream never ends and the client hangs with
+  // headers but no data — the download route's whole failure mode.
+  // One bad or missing key must still not take down the whole download —
+  // skip it and keep going, so a single stale R2 object doesn't kill the zip.
   (async () => {
     try {
       for (const r of rows) {
@@ -152,8 +175,13 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
           // album, flat is nicer.
           const path = albumSlug && !ids.length ? name : `${r.album_slug}/${name}`;
 
+          // Opened only now, immediately before it's consumed — never ahead
+          // of time. Nothing else is in flight while this one drains.
           const body = await getObjectStream(r.public_key);
+          body.on("error", (e: Error) => console.error(`zip: stream failed for ${r.public_key} — ${e.message}`));
+          const written = entryWritten();
           archive.append(body as any, { name: path });
+          await written;
         } catch (e) {
           console.error(`zip: skipping ${r.public_key} — ${(e as Error).message}`);
         }

@@ -1370,6 +1370,49 @@ processing failures also keep assets out of the queue (they never reach
 
 ---
 
+## Downloads hang with no data — the zip route must open ONE object at a time
+
+**The big one.** `g/[slug]/download/route.ts` feeds R2 object streams into
+`archiver`. `archive.append()` only *queues* an entry and returns
+immediately — it does **not** wait for that entry to be written. The
+original loop therefore called `getObjectStream()` for **every row up
+front**, opening a fresh R2 connection per file (1300+ on a big gallery)
+within seconds, while the zip writer consumed them one at a time.
+
+Connections opened at the start then sat idle for minutes waiting their
+turn and died. The two signatures in the app log:
+- `Error: aborted ... code: 'ECONNRESET'` — a stale R2 socket dropping.
+- `The difference between the request time and the server's time is too
+  large` — **not** clock drift (NTP was verified healthy at the time); a
+  signed request finally being used long after it was created.
+
+When a source stream dies mid-entry the archive stalls, so the output
+stream never ends and the client hangs **with headers already sent but no
+body** — a download that "starts" and then receives nothing, forever.
+Symptoms scale with gallery size and file size, so it presented first as
+"videos won't download", then as "all downloads hang" once the gallery
+passed ~1300 assets. Every path through this route is affected: admin
+Download album, admin Download selected, and the public cart.
+
+Fixed by awaiting archiver's `'entry'` event after each `append()`, so the
+next object's stream is opened only once the previous one has been fully
+written — exactly one R2 connection in flight at any moment, flat memory,
+nothing sitting idle long enough to go stale. Verified against archiver
+7.0.1 with a harness that counted concurrent sources: **40 of 40 open at
+once before the fix, 1 after.**
+
+Also: `archive.on("error")` used to only log. An archive-level error is
+fatal — nothing more can be written — so leaving `out` open meant the
+client waited forever on a response that could never arrive. It now
+destroys `out`, turning an infinite hang into a failure the browser can
+actually report.
+
+**Guardrail: never `append()` in a loop without awaiting the entry.** Any
+future change here that appends streams eagerly reintroduces this exact
+outage.
+
+---
+
 ## 504 on downloads (Gateway Time-out) — nginx buffering, not the app
 
 Symptom: an album/gallery/cart zip download hangs, then nginx returns a 504,

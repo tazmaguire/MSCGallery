@@ -1367,3 +1367,79 @@ so they don't linger indefinitely either way. If uploads still fail after
 both are confirmed correct, check `docker compose logs worker` next —
 processing failures also keep assets out of the queue (they never reach
 `ready`).
+
+---
+
+## 504 on downloads (Gateway Time-out) — nginx buffering, not the app
+
+Symptom: an album/gallery/cart zip download hangs, then nginx returns a 504,
+and the nginx error log shows `upstream timed out ... while reading response
+header from upstream` for a `/g/<slug>/download` request — despite the app
+itself streaming the zip correctly (confirmed by `curl`ing
+`http://127.0.0.1:8090/...` directly on the server, bypassing nginx
+entirely, which responds immediately).
+
+**Root cause both times this happened: the live nginx config didn't have
+`deploy/nginx/gallery.conf`'s download-timeout override applied to the
+server block that's actually serving HTTPS traffic.** nginx config is
+**never** touched by `deploy/update.sh` or the self-update mechanism —
+unlike app/worker code, a change to `deploy/nginx/gallery.conf` in this
+repo does **nothing** on the live server until someone manually edits
+`/etc/nginx/sites-available/gallery.memorialstairclimb.co.uk` and reloads.
+Worse, this site has **two nginx server blocks** — certbot generates a
+`listen 443 ssl` block (the one real browsers actually hit) *separate*
+from the original plain `listen 80` block, and it does **not** retroactively
+copy later manual edits from one into the other. A `location` block added
+only to the `:80` block (or written against a single-block reference file
+that doesn't reflect this split) silently does nothing for HTTPS traffic.
+`deploy/nginx/gallery.conf` in this repo is now written to mirror the real
+two-block structure exactly, specifically so this is harder to get wrong
+again — if you ever edit it, the download-timeout `location ~ ^/g/[^/]+/
+download` block MUST end up inside the `listen 443 ssl` block on the live
+server, not just the `:80` one.
+
+Without that override, nginx's *defaults* apply: `proxy_buffering on` (nginx
+tries to accumulate the **entire** zip server-side before forwarding any of
+it to the client — the opposite of what the app's own streaming
+`archiver`/`PassThrough` implementation is designed for) and whatever
+`proxy_read_timeout` the general `location /` block sets (300s here) — both
+of which a large video album can blow straight through even though the app
+was never actually stuck.
+
+**Fix, on the server:**
+```
+nano /etc/nginx/sites-enabled/gallery.memorialstairclimb.co.uk
+# add the `location ~ ^/g/[^/]+/download { ... }` block from
+# deploy/nginx/gallery.conf INSIDE the `listen 443 ssl` server block,
+# before its `location /` block.
+nginx -t && systemctl reload nginx
+```
+**Diagnostic worth keeping**: `curl` the app directly on `127.0.0.1:8090`
+(bypassing nginx) for the exact failing URL — a fast response there and a
+504 through nginx is the signature of this exact class of bug, and rules
+out an app/DB/worker problem before you go looking for one.
+
+---
+
+## Cart downloads must verify success before clearing the cart
+
+`Gallery.tsx`'s "Download all" used to fire the zip download as a plain
+navigation (`window.location.href = cartDownloadUrl`) and clear the cart on
+the very next line, unconditionally. A plain navigation gives the calling
+JS **zero signal** about whether the download actually succeeded — so
+during the nginx 504 issue above, the cart cleared instantly every time
+while the download itself silently hung or failed, looking exactly like
+data loss even though nothing was actually deleted server-side.
+
+Fixed by `downloadCartZip()`: it `fetch()`es the same URL, only triggers
+the browser's save (via a `Blob` + object URL + a synthetic `<a>` click)
+and clears the cart *after* confirming `res.ok`, and shows a "your cart is
+still here, please try again" toast on any failure instead. This trades
+away the native browser download UI's progressive/streaming save for a
+"buffer the whole zip in memory, then save" flow — accepted specifically
+because the cart is already capped at `MAX_CART_IDS` (300, enforced
+server-side in `g/[slug]/download/route.ts`) — but is **not** used for the
+uncapped whole-gallery/whole-album admin downloads elsewhere in this file
+(`GalleryManager`'s "Download album"/"Download all" links), which stay on
+the direct-navigation approach since buffering an unbounded download fully
+into browser memory first would be worse, not better, for those.

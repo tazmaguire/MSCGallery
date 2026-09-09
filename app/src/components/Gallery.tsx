@@ -5,7 +5,7 @@
  * covers → photos. Downloads at photo / album / gallery. "Shot by Sarah".
  */
 import { useState, useMemo, useEffect, useRef } from "react";
-import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2, ExternalLink, Video } from "lucide-react";
+import { Download, X, ChevronLeft, ChevronRight, Play, ArrowLeft, ShoppingCart, Check, Trash2, ExternalLink, Video, Loader2 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import SiteHeader from "@/components/SiteHeader";
 import DownloadPinModal from "@/components/DownloadPinModal";
@@ -123,6 +123,39 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
   const blockSave = (e: React.SyntheticEvent) => { e.preventDefault(); showToast("You can't do this."); };
   const clearCart = () => persistCart(new Set());
   const cartDownloadUrl = withIdentity(`/g/${gallerySlug}/download?${[...cart].map((id) => `id=${id}`).join("&")}`);
+  const [cartDownloading, setCartDownloading] = useState(false);
+  // A plain navigation (window.location.href = cartDownloadUrl) can't be
+  // checked for success at all — the browser just starts a download (or
+  // silently fails/hangs) with zero signal back to this code, which is
+  // exactly how the cart used to end up clearing itself even when nginx
+  // was hanging the download server-side: the "clear" ran unconditionally
+  // right after firing the navigation, regardless of whether anything
+  // actually came back. fetch() lets the cart only clear once the server
+  // has genuinely confirmed the zip, at the cost of buffering it in memory
+  // client-side before the save dialog appears (no progressive/streaming
+  // save from a fetch response in every browser today) — accepted here
+  // specifically because the cart is already capped at MAX_CART_IDS (300)
+  // server-side, unlike the uncapped whole-gallery/whole-album admin
+  // downloads elsewhere in this file, which stay on the direct-navigation
+  // path.
+  const downloadCartZip = async () => {
+    setCartDownloading(true);
+    try {
+      const res = await fetch(cartDownloadUrl);
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${gallerySlug}-photos.zip`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      clearCart();
+    } catch {
+      showToast("Download didn't complete — your cart is still here, please try again.", 5000);
+    } finally {
+      setCartDownloading(false);
+    }
+  };
   // Cart items can come from any album, so resolve against everything
   // currently loaded, not just the open album.
   const allAssetsById = useMemo(() => {
@@ -391,16 +424,16 @@ export default function Gallery({ gallerySlug, galleryName, eventDate, location,
             </div>
             {cart.size > 0 && (
               <div className="space-y-2 border-t border-[var(--border)] p-4">
-                {/* Navigate first (the URL string is already fully resolved
-                    from the current cart), then clear — clearing before the
-                    browser reads it would strip every id= param since
-                    cartDownloadUrl is derived reactively from cart state. */}
-                {!dlIdentity?.name || (downloadMode === "pin" && !dlUnlocked) ? (
-                  <button onClick={() => requestDownload(() => { window.location.href = cartDownloadUrl; clearCart(); })} className="btn-primary flex w-full items-center justify-center gap-2 py-3"><Download size={16} /> Download all ({cart.size})</button>
-                ) : (
-                  <a href={cartDownloadUrl} onClick={(e) => { e.preventDefault(); window.location.href = cartDownloadUrl; clearCart(); }} className="btn-primary flex w-full items-center justify-center gap-2 py-3"><Download size={16} /> Download all ({cart.size})</a>
-                )}
-                <button onClick={clearCart} className="btn-ghost flex w-full items-center justify-center gap-2 py-2.5 text-sm"><Trash2 size={14} /> Clear cart</button>
+                {/* downloadCartZip() only clears the cart once the server has
+                    genuinely confirmed the zip — a plain navigation (the
+                    previous approach) fires-and-forgets with zero success
+                    signal, so the cart could clear "instantly" even while
+                    the actual download hung or failed server-side. */}
+                <button onClick={() => requestDownload(downloadCartZip)} disabled={cartDownloading} className="btn-primary flex w-full items-center justify-center gap-2 py-3 disabled:opacity-60">
+                  {cartDownloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                  {cartDownloading ? "Preparing download…" : `Download all (${cart.size})`}
+                </button>
+                <button onClick={clearCart} disabled={cartDownloading} className="btn-ghost flex w-full items-center justify-center gap-2 py-2.5 text-sm disabled:opacity-60"><Trash2 size={14} /> Clear cart</button>
               </div>
             )}
           </div>

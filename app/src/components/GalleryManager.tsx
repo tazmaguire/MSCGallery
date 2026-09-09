@@ -40,12 +40,26 @@ export default function GalleryManager({ gallery, isOwner, storageBytes }: { gal
   const fileRef = useRef<HTMLInputElement>(null);
   const videoFileRef = useRef<HTMLInputElement>(null);
   const style = { ["--brand" as any]: gallery.brand?.primary || "#E8442A" } as React.CSSProperties;
+  // Which album loadAssets() is currently fetching FOR, kept in a ref so the
+  // fetch's own .then() can check it once the response actually arrives —
+  // clicking between albums quickly (routine now that a gallery can hold
+  // 1000+ photos across many albums) could let an earlier, slower request
+  // resolve AFTER a newer one and overwrite `assets` with the WRONG album's
+  // photos, while the tab strip still correctly highlighted the album the
+  // admin actually clicked. The data was always in the right album; this is
+  // what made the admin's own screen briefly lie about it.
+  const activeAssetsFor = useRef<string | null>(null);
 
   const loadAlbums = useCallback(() => fetch(`/api/admin/albums?gallery=${gallery.id}`).then(r => r.json()).then(d => { setAlbums(d.albums); if (!active && d.albums[0]) setActive(d.albums[0].id); }), [gallery.id, active]);
   const loadAssets = useCallback(() => {
     if (!active) return;
     if (albums.find(a => a.id === active)?.is_showcase) return; // no per-asset grid for showcase albums
-    fetch(`/api/admin/assets?album=${active}`).then(r => r.json()).then(d => setAssets(d.assets));
+    const forAlbum = active;
+    activeAssetsFor.current = forAlbum;
+    fetch(`/api/admin/assets?album=${forAlbum}`).then(r => r.json()).then(d => {
+      if (activeAssetsFor.current !== forAlbum) return; // stale — admin has since switched albums
+      setAssets(d.assets);
+    });
   }, [active, albums]);
   const loadLinks = useCallback(() => fetch(`/api/admin/links?gallery=${gallery.id}`).then(r => r.json()).then(d => setLinks(d.links)), [gallery.id]);
   const [sortErr, setSortErr] = useState("");

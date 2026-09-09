@@ -139,6 +139,29 @@ async function derive(a, dir) {
 
   const h = crypto.createHash("sha256"); h.update(await readFile(orig));
   const checksum = h.digest("hex");
+
+  // A guest can end up submitting the exact same file twice — in practice
+  // this is a resubmitted batch after their tab reloaded mid-upload (a big
+  // batch on a phone is exactly when iOS Safari is most likely to reload a
+  // backgrounded tab from memory pressure; seeing no confirmation, the guest
+  // naturally just tries again). The DB's (gallery_id, checksum) unique
+  // index already caught the second copy, but only via a hard failure at
+  // the very end of this function, after every expensive resize/transcode
+  // step had already run for nothing — and it surfaced in the admin's
+  // Upload issues view as a raw Postgres "duplicate key value violates
+  // unique constraint" string, indistinguishable from a genuine failure
+  // that needs following up with the guest. Check for it here instead,
+  // right after computing the checksum and before any real work, and
+  // reject it the same clean way an invalid file gets rejected above.
+  const [dup] = await db.query(`SELECT id FROM assets WHERE gallery_id=$1 AND checksum=$2 AND id!=$3 AND status='ready'`, [a.gallery_id, checksum, a.id]);
+  if (dup) {
+    await db.query(`UPDATE assets SET status='failed', visibility='rejected', error=$2 WHERE id=$1`,
+      [a.id, `Duplicate — this exact photo is already in the gallery (uploaded separately). No action needed.`]);
+    try { await s3.send(new DeleteObjectCommand({ Bucket: cfg.bucket, Key: a.ingest_key })); } catch {}
+    log(`REJECTED duplicate ${a.id} (checksum matches ${dup.id})`);
+    return;
+  }
+
   const credit = {
     name: a.credit_name,
     copyright: `© ${new Date(a.event_date || Date.now()).getFullYear()} ${a.credit_name}. ${a.gallery_name}.`,
@@ -278,7 +301,15 @@ async function runOne() {
   } catch (e) {
     log(`FAIL job ${job.id}:`, e.message);
     await db.query(`UPDATE jobs SET locked_at=NULL, last_error=$2 WHERE id=$1`, [job.id, String(e.message).slice(0, 500)]);
-    await db.query(`UPDATE assets SET status='failed', error=$2 WHERE id=$1`, [asset.id, String(e.message).slice(0, 500)]);
+    // Safety net for the rare case two concurrent derive() jobs both pass
+    // derive()'s own upfront duplicate-checksum check before either has
+    // written 'ready' — the DB's unique index still catches it here. Same
+    // clean "Duplicate" labeling as the deliberate check above, instead of
+    // a raw constraint-violation string landing in the admin's Upload
+    // issues view looking like a real failure.
+    const isDupError = e.code === "23505" && e.constraint === "assets_gallery_id_checksum_idx";
+    await db.query(`UPDATE assets SET status='failed', visibility=$3, error=$2 WHERE id=$1`,
+      [asset.id, isDupError ? "Duplicate — this exact photo is already in the gallery (uploaded separately). No action needed." : String(e.message).slice(0, 500), isDupError ? "rejected" : asset.visibility]);
   } finally { await rm(dir, { recursive: true, force: true }); }
   return true;
 }

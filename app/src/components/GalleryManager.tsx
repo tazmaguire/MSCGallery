@@ -418,32 +418,57 @@ function SettingsModal({ gallery, albums, links, reloadLinks, isOwner, initialTa
     </Modal>
   );
 }
+// A guest resubmitting the same batch (e.g. their tab reloaded mid-upload
+// and, seeing no confirmation, they just tried again) produces a second
+// asset the DB's checksum uniqueness rejects — worker/src/index.js labels
+// this distinctly ("Duplicate — ...") from a genuine failure, since it
+// needs no follow-up at all (the photo is already in the gallery under the
+// other upload). Matched by prefix rather than a new column/status value —
+// the worker fully controls this string, no schema change needed.
+const isDuplicateIssue = (i: any) => i.error?.startsWith("Duplicate");
+
 function UploadIssuesTab({ galleryId, isOwner }: any) {
   const [issues, setIssues] = useState<any[] | null>(null);
   const load = useCallback(() => fetch(`/api/admin/galleries/${galleryId}/upload-issues`).then(r => r.json()).then(d => setIssues(d.issues || [])), [galleryId]);
   useEffect(() => { load(); }, [load]);
-  const dismiss = (id: string) => {
-    setIssues(is => is && is.filter(i => i.id !== id)); // optimistic — these are dead rows either way
-    fetch("/api/admin/assets", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds: [id] }) });
+  const dismiss = (ids: string[]) => {
+    setIssues(is => is && is.filter(i => !ids.includes(i.id))); // optimistic — these are dead rows either way
+    fetch("/api/admin/assets", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetIds: ids }) });
   };
   if (issues === null) return <Loader2 size={18} className="mx-auto my-4 animate-spin text-[var(--text-3)]" />;
   if (!issues.length) return <p className="data py-8 text-center text-[var(--text-3)]">No upload problems — everything that's come in has processed cleanly.</p>;
-  return (
-    <div className="max-h-96 space-y-1.5 overflow-y-auto">
-      <p className="data mb-2 text-[var(--text-3)]">Photos/videos that never finished uploading, or were rejected as invalid files. A guest whose upload is stuck here typically never saw an error at the time — worth a follow-up with them.</p>
-      {issues.map(i => (
-        <div key={i.id} className="flex items-center gap-3 rounded-[var(--radius)] bg-[var(--bg-2)] px-3 py-2 text-sm">
-          <AlertTriangle size={15} className="shrink-0 text-[var(--brand)]" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate">{i.original_filename || "(untitled)"}{i.album_name && <span className="text-[var(--text-3)]"> · {i.album_name}</span>}</div>
-            <div className="data text-[var(--text-3)]">
-              {i.first_name || i.contributor_name || "Unknown"} · {i.status === "awaiting_upload" ? "never arrived" : "failed"} · {new Date(i.created_at).toLocaleString()}
-              {i.error && ` · ${i.error}`}
-            </div>
-          </div>
-          {isOwner && <button onClick={() => dismiss(i.id)} className="btn-ghost shrink-0 px-2 py-1.5 text-xs">Dismiss</button>}
+  const real = issues.filter(i => !isDuplicateIssue(i));
+  const dups = issues.filter(isDuplicateIssue);
+  const row = (i: any, dim: boolean) => (
+    <div key={i.id} className="flex items-center gap-3 rounded-[var(--radius)] bg-[var(--bg-2)] px-3 py-2 text-sm">
+      {dim ? <Copy size={15} className="shrink-0 text-[var(--text-3)]" /> : <AlertTriangle size={15} className="shrink-0 text-[var(--brand)]" />}
+      <div className="min-w-0 flex-1">
+        <div className={`truncate ${dim ? "text-[var(--text-2)]" : ""}`}>{i.original_filename || "(untitled)"}{i.album_name && <span className="text-[var(--text-3)]"> · {i.album_name}</span>}</div>
+        <div className="data text-[var(--text-3)]">
+          {i.first_name || i.contributor_name || "Unknown"} · {i.status === "awaiting_upload" ? "never arrived" : "failed"} · {new Date(i.created_at).toLocaleString()}
+          {i.error && ` · ${i.error}`}
         </div>
-      ))}
+      </div>
+      {isOwner && <button onClick={() => dismiss([i.id])} className="btn-ghost shrink-0 px-2 py-1.5 text-xs">Dismiss</button>}
+    </div>
+  );
+  return (
+    <div className="max-h-96 space-y-4 overflow-y-auto">
+      {real.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="data text-[var(--text-3)]">Never finished uploading, or rejected as an invalid file. A guest whose upload is stuck here typically never saw an error at the time — worth a follow-up with them.</p>
+          {real.map(i => row(i, false))}
+        </div>
+      )}
+      {dups.length > 0 && (
+        <div className="space-y-1.5 border-t border-[var(--border)] pt-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="data text-[var(--text-3)]">Duplicates — the guest's photo already exists in the gallery under a separate upload. No action needed.</p>
+            {isOwner && dups.length > 1 && <button onClick={() => dismiss(dups.map(d => d.id))} className="btn-ghost shrink-0 px-2 py-1.5 text-xs">Dismiss all {dups.length}</button>}
+          </div>
+          {dups.map(i => row(i, true))}
+        </div>
+      )}
     </div>
   );
 }

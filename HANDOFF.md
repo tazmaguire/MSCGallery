@@ -715,6 +715,38 @@ silent ghosts into dated, queryable failure records. The 2h threshold is
 deliberately generous — a slow phone connection on a big video upload is a
 real, non-broken case.
 
+**Duplicate uploads are a separate, non-actionable case — labeled as such,
+not left as a raw SQL error.** Once the Upload issues view above went live,
+production data showed the large majority of `status='failed'` rows were
+`duplicate key value violates unique constraint "assets_gallery_id_
+checksum_idx"` — a guest resubmitting the exact same batch (most plausibly:
+their tab reloaded mid-upload on a phone, iOS Safari discards a
+backgrounded tab's JS state under memory pressure especially for a large
+batch, and seeing no confirmation afterward the guest just tries again).
+The DB's `(gallery_id, checksum)` unique index was already correctly
+rejecting the second copy — the photo is safely in the gallery under the
+first, successful upload — but it only failed at the very end of
+`derive()`, after every resize/transcode step had already run for nothing,
+and it surfaced as a raw Postgres error string in the admin's Upload
+issues view, indistinguishable from a genuine failure that needs following
+up with the guest. `worker/src/index.js`'s `derive()` now checks for an
+existing `ready` asset with the same checksum right after computing it
+(before any real work), and rejects the duplicate the same clean way an
+invalid file is already rejected just above it — `status='failed',
+visibility='rejected'`, error text starting `"Duplicate — "`. `runOne()`'s
+catch block also recognizes the underlying Postgres error
+(`code === '23505'`, `constraint === 'assets_gallery_id_checksum_idx'`) as
+a safety net for the rare case two concurrent derive() jobs both pass the
+early check before either has written `ready`. **The "Duplicate — " error
+prefix is a real, load-bearing string** — `GalleryManager.tsx`'s
+`UploadIssuesTab` matches on it (`isDuplicateIssue`) to split the panel
+into a "needs follow-up" section and a separate, calmer "Duplicates — no
+action needed" section with its own bulk "Dismiss all" button (there were
+enough of these in production to make one-by-one dismissal genuinely
+tedious). If you ever change this message, update `isDuplicateIssue`
+alongside it — there's no separate DB column backing this distinction, by
+design, to avoid a migration for what's really just a label.
+
 Admin visibility: `lib/moderation.ts`'s `uploadIssues(galleryId)` /
 `uploadIssuesCount(galleryId)` (status IN `('awaiting_upload','failed')`,
 same "invisible everywhere else" gap `PENDING_WHERE` has for `pending`

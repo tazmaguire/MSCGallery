@@ -153,7 +153,8 @@ async function derive(a, dir) {
   // that needs following up with the guest. Check for it here instead,
   // right after computing the checksum and before any real work, and
   // reject it the same clean way an invalid file gets rejected above.
-  const [dup] = await db.query(`SELECT id FROM assets WHERE gallery_id=$1 AND checksum=$2 AND id!=$3 AND status='ready'`, [a.gallery_id, checksum, a.id]);
+  const { rows: dupRows } = await db.query(`SELECT id FROM assets WHERE gallery_id=$1 AND checksum=$2 AND id!=$3 AND status='ready'`, [a.gallery_id, checksum, a.id]);
+  const dup = dupRows[0];
   if (dup) {
     await db.query(`UPDATE assets SET status='failed', visibility='rejected', error=$2 WHERE id=$1`,
       [a.id, `Duplicate — this exact photo is already in the gallery (uploaded separately). No action needed.`]);
